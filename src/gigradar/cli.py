@@ -6,7 +6,7 @@ from rich.table import Table
 
 from gigradar import __version__
 from gigradar.core.config_loader import validate_all_configs
-from gigradar.core.gemini_verifier import mask_key, verify_gemini_key
+from gigradar.core.gemini_verifier import is_placeholder, mask_key, verify_gemini_key
 from gigradar.core.logging import setup_logging
 from gigradar.core.settings import get_settings
 
@@ -55,6 +55,7 @@ def doctor(
     )
 
     all_passed = True
+    has_placeholder = False
 
     # 1. Configuration Files
     config_table = Table(title="Configuration Files (YAML)", show_header=True, header_style="bold magenta")
@@ -83,13 +84,26 @@ def doctor(
 
     # Telegram Checks
     if settings.telegram_bot_token:
-        masked_tg = mask_key(settings.telegram_bot_token.get_secret_value())
-        env_table.add_row("TELEGRAM_BOT_TOKEN", f"[green]Configured[/green] ({masked_tg})", "Ready")
+        raw_tg = settings.telegram_bot_token.get_secret_value()
+        if is_placeholder(raw_tg):
+            has_placeholder = True
+            env_table.add_row("TELEGRAM_BOT_TOKEN", "[yellow]PLACEHOLDER[/yellow]", "Example token from .env.example")
+        else:
+            masked_tg = mask_key(raw_tg)
+            env_table.add_row("TELEGRAM_BOT_TOKEN", f"[green]Configured[/green] ({masked_tg})", "Ready")
     else:
         env_table.add_row("TELEGRAM_BOT_TOKEN", "[yellow]Not Set[/yellow]", "Needed for Phase 4")
 
-    if settings.telegram_allowed_chat_id:
-        env_table.add_row("TELEGRAM_ALLOWED_CHAT_ID", str(settings.telegram_allowed_chat_id), "Whitelisted user")
+    if settings.telegram_allowed_chat_id is not None:
+        if is_placeholder(settings.telegram_allowed_chat_id):
+            has_placeholder = True
+            env_table.add_row(
+                "TELEGRAM_ALLOWED_CHAT_ID",
+                "[yellow]PLACEHOLDER[/yellow]",
+                "Example chat ID from .env.example",
+            )
+        else:
+            env_table.add_row("TELEGRAM_ALLOWED_CHAT_ID", str(settings.telegram_allowed_chat_id), "Whitelisted user")
     else:
         env_table.add_row("TELEGRAM_ALLOWED_CHAT_ID", "[yellow]Not Set[/yellow]", "Needed for Phase 4")
 
@@ -109,15 +123,20 @@ def doctor(
     llm_table.add_column("Details", style="dim")
 
     raw_key = settings.gemini_api_key.get_secret_value() if settings.gemini_api_key else None
-    masked_gemini = mask_key(raw_key)
 
     if not raw_key:
         llm_table.add_row("GEMINI_API_KEY", "[yellow]NOT SET[/yellow]", "Set GEMINI_API_KEY in .env")
         llm_table.add_row("Live Connectivity", "[yellow]SKIPPED[/yellow]", "No key provided")
+    elif is_placeholder(raw_key):
+        has_placeholder = True
+        llm_table.add_row("GEMINI_API_KEY", "[yellow]PLACEHOLDER[/yellow]", f"'{raw_key}' from .env.example")
+        llm_table.add_row("Live Connectivity", "[yellow]SKIPPED[/yellow]", "Placeholder key; add real key in .env")
     elif skip_live_llm:
+        masked_gemini = mask_key(raw_key)
         llm_table.add_row("GEMINI_API_KEY", f"[green]FOUND[/green] ({masked_gemini})", "Key present")
         llm_table.add_row("Live Connectivity", "[cyan]SKIPPED[/cyan]", "--skip-live-llm passed")
     else:
+        masked_gemini = mask_key(raw_key)
         llm_table.add_row("GEMINI_API_KEY", f"[green]FOUND[/green] ({masked_gemini})", "Key present")
         with console.status("[bold green]Contacting Gemini API...[/bold green]"):
             is_valid, msg = verify_gemini_key(raw_key, model_id=settings.llm_model_scorer)
@@ -131,8 +150,12 @@ def doctor(
     console.print()
 
     # Summary
-    if all_passed and raw_key:
-        console.print("[bold green]Doctor check complete: System is healthy and ready![/bold green]\n")
+    if all_passed and not has_placeholder and raw_key:
+        console.print("[bold green]Doctor check complete: System is healthy and fully configured![/bold green]\n")
+    elif all_passed and has_placeholder:
+        console.print(
+            "[bold yellow]Doctor check complete: Configurations valid. Replace PLACEHOLDER values in .env with your real credentials when ready.[/bold yellow]\n",
+        )
     elif all_passed and not raw_key:
         console.print(
             "[bold yellow]Doctor check complete: Configurations valid. Set GEMINI_API_KEY in .env when ready for live LLM tests.[/bold yellow]\n",

@@ -1,33 +1,45 @@
+# ==============================================================================
+# Claims Allowlist (Source of Truth for Proposal Pitches)
+#
+# NOTE: config/profile.yaml tiers describe work I may ACCEPT, while this file
+# lists what pitches may CLAIM. Every claim here traces strictly to Hany's CV
+# and verified portfolio projects. Pitches must never invent skills, tools,
+# clients, years of experience, or certifications not listed here.
+# ==============================================================================
+
 allowed_claims:
   education:
     - "B.Sc. student in Navigation & Space Technology"
-    - "Strong mathematical and fundamentals foundation"
-  experience_level:
-    - "Junior ML Engineer"
-    - "Practical hands-on experience building end-to-end pipelines and models"
+    - "Solid mathematical and machine learning fundamentals"
+    - "Junior ML Engineer based in Egypt"
+
   languages:
     - "Arabic native speaker"
     - "Fluent English (C1 level)"
+
   tabular_ml:
-    - "Proficient in Python, NumPy, Pandas, scikit-learn, XGBoost"
-    - "Experienced in feature engineering, hyperparameter tuning, and threshold tuning for imbalanced datasets"
-    - "3rd place winner in NASA Space Apps hackathon (team lead for Sky-Spy exoplanet classifier)"
-    - "Implemented Kessler-Shield orbital collision warning handling 1:1300 class imbalance"
+    - "Python, NumPy, Pandas, scikit-learn, XGBoost"
+    - "Feature engineering, hyperparameter search, and precision-recall threshold tuning for imbalanced classification"
+    - "NASA Space Apps 3rd place (team lead for Sky-Spy exoplanet classifier using tuned XGBoost, FastAPI, and Streamlit)"
+    - "Built Kessler-Shield orbital collision warning handling ~1:1300 class imbalance without oversampling, deployed as cloud microservices"
+
   data_engineering:
-    - "Built ETL pipelines with PostgreSQL, SQLAlchemy, MySQL, MongoDB"
-    - "Experienced in relational schema normalization, data cleaning, and deduplication"
-    - "Web scraping and automated data collection"
+    - "Relational schema design, normalization, data cleaning, and deduplication"
+    - "ETL pipelines using PostgreSQL and SQLAlchemy ORM (TicketSense project resolving 441 customer duplicates and schema normalization)"
+    - "Web scraping and automated data collection pipelines in Python"
+
   deployment:
-    - "FastAPI REST API development and model serving"
-    - "Interactive dashboards using Streamlit, Plotly, and Matplotlib"
+    - "FastAPI REST API backend development and model serving"
+    - "Interactive dashboards and data visualizations with Streamlit, Plotly, and Matplotlib"
     - "Cloud deployment on Railway and Streamlit Cloud"
+
   fundamentals_and_dsp:
-    - "Implemented core ML algorithms from scratch in NumPy (forward/backward passes)"
-    - "Signal processing and DSP experience (FMCW Radar simulation, CFAR, range-velocity data cubes, MATLAB)"
+    - "The ML Blueprint: derived core ML algorithms from first principles in NumPy, including manual neural network forward/backward passes"
+    - "Signal processing and DSP: leading DSP pipeline for FMCW Radar simulation, range-velocity-angle data cube extraction, and CFAR detection in MATLAB/Python"
+
   deep_learning:
-    - "I work with PyTorch and have built CNN training pipelines with custom datasets; I am currently deepening my deep-learning skills"
-    - "Fine-tuning pretrained computer vision models (ResNet, EfficientNet, basic YOLO)"
-    - "Working with HuggingFace transformers for text classification, embeddings, and sentiment analysis"
+    # Strictly honest phrasing per Master Prompt section 2
+    - "I work with PyTorch and have built CNN training pipelines with custom datasets; I'm currently deepening my deep-learning skills."
 
 forbidden_patterns:
   - "\\b(?:\\d+|many|several)\\s+years\\s+(?:of\\s+)?(?:experience|working|in)\\b"
@@ -37,3 +49,5 @@ forbidden_patterns:
   - "\\b100%\\s*(?:guarantee|success|accuracy)\\b"
   - "\\bguaranteed\\s+(?:results|accuracy|satisfaction)\\b"
   - "\\bexpert\\s+in\\s+(?:all|everything)\\b"
+  - "\\b(?:ResNet|EfficientNet|YOLO|HuggingFace|BERT|transformers)\\b"
+  - "\\b(?:MySQL|MongoDB)\\b"
