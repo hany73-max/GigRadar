@@ -155,11 +155,17 @@ Platforms express relative time in Arabic phrasing:
   - `query`: String keyword search filter.
   - `jobs[]`: Array of integer skill/job IDs (e.g. `?jobs[]=13&jobs[]=292`).
   - `project_types[]`: `fixed`, `hourly`.
-  - `sort_field`: `time_updated` or `submitdate`.
-  - `reverse_sort`: `true` (returns newest projects first).
+  - `sort_field`: Criteria to sort results. Official choices in developer documentation are: `time_updated` (default newest first), `bid_count`, `bid_enddate`, `bid_avg_usd`.
+    - *Note on `sort_field=submitdate`:* Empirical probing confirmed that `submitdate` is **not** an accepted value for `sort_field`; passing it causes the API to ignore the parameter and fall back to internal default order.
+  - `reverse_sort`: Boolean ("If true, results appear in ascending order instead of descending order").
+    - *Note:* Because default order for `time_updated` is descending (newest first), setting `reverse_sort=true` reverses it to **ascending** (oldest first, e.g. 2022-2025). Do **not** use `reverse_sort=true` when fetching newest projects.
+  - `from_time`: Integer epoch timestamp (optional). Official docs specify: "Returns projects last updated after this time (inclusive)".
+    - *Empirical Verification:* Setting `from_time = now - max_gig_age_minutes` server-side isolates projects posted/updated within the specified age window (confirmed returning active projects posted within minutes/hours).
+  - `to_time`: Integer epoch timestamp (optional). Returns projects last updated before this time (inclusive).
   - `limit`: Number of projects per request (default 10, max 100).
   - `full_description`: `true` (ensures complete description text is returned rather than truncated preview).
   - `job_details`: `true` (expands full skill object with `name` and `category`).
+  - *Status Filter on API:* Official documentation inspection confirms there is **no** `status` or `statuses[]` query parameter on `/projects/0.1/projects/active/`. The endpoint occasionally returns closed or archived projects present in the search cache; local exclusion of `status != "active"` is mandatory.
 - **Skill / Job Directory:** `GET https://www.freelancer.com/api/projects/0.1/jobs/`
   - Query parameters: `job_names[]` (e.g. `?job_names[]=Python`).
   - Returns array of job objects with `id`, `name`, `category`, and `seo_url`.
@@ -185,14 +191,16 @@ From real API responses returned by `/projects/0.1/projects/active/`:
 - `seo_url` (str) -> `Gig.url`: `https://www.freelancer.com/projects/{seo_url}` (fallback: `https://www.freelancer.com/projects/{id}`)
 - `title` (str) -> `Gig.title`
 - `description` (str) -> `Gig.description` (fallback: `preview_description`)
-- `type` (str) -> `"fixed"` or `"hourly"`
+- `type` (str) -> `"fixed"` or `"hourly"` (`Gig.project_type`)
 - `budget.minimum` (float) -> `Gig.budget_min`
 - `budget.maximum` (float) -> `Gig.budget_max`
 - `currency.code` (str) -> `Gig.currency` (e.g. `"USD"`, `"GBP"`, `"EUR"`, `"INR"`)
 - `currency.exchange_rate` (float) -> Live exchange rate to USD provided natively by the API.
   - USD rate is `1.0`.
-  - Fixed projects: `budget_usd_est = round(budget_min * exchange_rate, 2)` (or `budget_max * exchange_rate`).
-  - Hourly projects: Stored as hourly range in `budget_min` / `budget_max`, with `budget_usd_est` computed from hourly rate.
+  - `Gig.budget_min_usd`: `round(budget_min * exchange_rate, 2)` if `budget_min` exists, else `None`.
+  - `Gig.budget_max_usd`: `round(budget_max * exchange_rate, 2)` if `budget_max` exists, else `None`.
+  - Fixed projects: `budget_usd_est` is computed as the midpoint `round((budget_min_usd + budget_max_usd) / 2.0, 2)` when both exist, otherwise whichever exists.
+  - Hourly projects: Stored as hourly rate ranges in `budget_min_usd` and `budget_max_usd`. `budget_usd_est` is set to `None`, relying on `project_type == "hourly"`.
 - `bid_stats.bid_count` (int) -> `Gig.bids_count`
 - `submitdate` (int unix timestamp) -> `Gig.posted_at`: `datetime.fromtimestamp(submitdate, tz=timezone.utc)`
 - `jobs` (list[dict]) -> `Gig.tags_raw`: `[job["name"] for job in jobs if "name" in job]`
@@ -208,10 +216,15 @@ Per Master Prompt rules, the client applies strict filtering to discard irreleva
   - `upgrades.recruiter is True` or `assisted is True`: Exclude recruiter-managed/fee listings.
   - `type == "contest"`: Exclude contests.
   - `status != "active"` or `deleted is True` or `nonpublic is True`: Exclude non-active.
+- **Server-Side Freshness Filtering:**
+  - `from_time` set to `int(since.timestamp())` to ensure the API returns only gigs within the allowed age window (`max_gig_age_minutes`).
 - **Deduplication:**
   - Queries across multiple skill IDs or keywords are merged and deduplicated by project `id`.
+  - Client sorts returned stubs descending by `posted_at` in Python to guarantee newest-first presentation.
 
 ### 4.6 Rate Limits & Terms of Service Compliance
 - **Rate Limits:** Approximately 100 requests per minute per IP. `PoliteHttpClient` enforces jitter, rate limiting, and backoff on HTTP 429 (`Retry-After`).
+- **Terms of Service:** Read-only inspection of active listings through the official API does not violate platform rules. Automated bidding without human oversight is prohibited (bidding is out of scope for Phase 1b and strictly human-gated in Phase 9).
+
 - **Terms of Service:** Read-only inspection of active listings through the official API does not violate platform rules. Automated bidding without human oversight is prohibited (bidding is out of scope for Phase 1b and strictly human-gated in Phase 9).
 

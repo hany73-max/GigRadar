@@ -8,13 +8,15 @@ This document is the single source of truth for the project's current state, dec
 
 - **Current Phase:** Phase 1b: Freelancer.com via official API (COMPLETED)
 - **Next Phase:** Phase 2: Storage, dedupe, scheduling
-- **Overall System Health:** Green (All 101 unit tests passing, `ruff` clean, `mypy --strict` clean on 32 source files, 0 warnings, `gigradar doctor` operational, `gigradar scrape-once mostaql`, `khamsat`, and `freelancer` functional)
+- **Overall System Health:** Green (All 107 unit tests passing, `ruff` clean, `mypy --strict` clean on 32 source files, 0 warnings, `gigradar doctor` operational, `gigradar scrape-once mostaql`, `khamsat`, and `freelancer` functional)
 
 ---
 
 ## Carry-Forward Notes
 
 - **Phase 2 (Khamsat New-Gig Detection):** Khamsat listings are ordered by last activity, not posting time, so new-gig detection must use `external_id` plus a `posted_at` age check, never an early exit on a known ID.
+- **Phase 3 (Hourly & Fixed Range Thresholds):** The rules filter must compare hourly projects against a separate `min_hourly_rate_usd` (add to config), and use `budget_max_usd` for the minimum-budget check on fixed ranges.
+- **Phase 3 (Freelancer Saturation Strategy):** Freelancer projects fill with bids rapidly, so the rules filter should prefer gigs with few bids and a recent `posted_at`.
 - **Phases 3 & 5 (Khamsat Detail Level):** Add a `detail_level` field (`full | title_only`) to `Gig`, set it to `title_only` for Khamsat, and make the rules filter and the scorer prompt aware that the description is missing.
 - **Phase 6 (Pitch Validation):** Replace the vocabulary regex ban with claim-based validation (comparing pitch factual statements against `claims_allowlist.yaml` and retrieved portfolio items via LLM judge, rather than naive regex keyword matching).
 
@@ -192,34 +194,41 @@ Phase 1 is complete and refined. Mostaql listing+detail and Khamsat listing-only
   - `tests/fixtures/json/freelancer_single_project.json`: Sanitized single project detail fixture.
 - **CLI Command Extension:**
   - `src/gigradar/cli.py`: Wired `gigradar scrape-once freelancer --limit N` rendering parsed projects with original budget, estimated USD amounts, UTC timestamps, bid counts, and language.
-- **Test Suite (8 new tests, 101 total):**
+- **Test Suite (14 new tests, 107 total):**
   - `tests/test_freelancer_parser.py`: 5 tests validating single project parsing, stub parsing, active envelope parsing, hourly project handling, exclusion rules (NDA, local, recruiter, contests, closed), and error cases.
+  - `tests/test_normalization.py`: Added 6 parametrized tests for `format_budget_display` handling fixed dual-currency ranges, hourly ranges, and missing budgets.
   - `tests/test_platform_clients.py`: Added 2 tests for protocol conformance, mock listing/detail flow, and health check failure handling.
-  - `tests/test_cli.py`: Added test for `scrape-once freelancer`.
+  - `tests/test_cli.py`: Added 2 tests for `scrape-once freelancer` and `--all` flag.
 
 #### 2. How to run / verify it
 ```bash
 # Full verification:
 uv run ruff check .
+uv run ruff format --check .
 uv run mypy src tests
 uv run pytest -v
 
 # Run the complete verification script:
 powershell -ExecutionPolicy Bypass -File scripts/check.ps1
 
-# Live scraping against Freelancer official API (unauthenticated):
+# Live scraping against Freelancer official API with default age filter (newest gigs within max_gig_age_minutes):
 uv run gigradar scrape-once freelancer --limit 5
+
+# Live scraping without age filter:
+uv run gigradar scrape-once freelancer --limit 5 --all
 ```
 
 #### 3. Test results
-- **Pytest:** 101 passed in 6.03s (0 warnings).
-- **Ruff:** All checks passed.
+- **Pytest:** 107 passed in 4.93s (0 warnings).
+- **Ruff:** All checks passed (clean lint and format).
 - **Mypy:** Success: no issues found in 32 source files (`--strict` mode).
 
 #### 4. Decisions made and why
 - **Unauthenticated Active Project Search:** Discovery confirmed that `GET /projects/0.1/projects/active/` returns HTTP 200 without OAuth tokens. However, client details (`owner_id`, `owner_info`, buyer KYC, location) are hidden (`None`) by Freelancer unless authenticated. This satisfies Phase 1b read-only requirements cleanly without needing an OAuth app.
-- **Native Exchange Rate Utilization:** The Freelancer API provides live currency `exchange_rate` directly inside each project's `currency` dictionary (`1.0` for USD, `1.3328` for GBP, `0.010531` for INR, etc.). `budget_usd_est` is computed directly as `round(budget_min * exchange_rate, 2)`, avoiding external FX lookups.
-- **Discrete `project_type` Model Field:** Added `project_type: Literal["fixed", "hourly"] = "fixed"` to `Gig` so hourly project ranges are strictly preserved without corrupting fixed-price calculations.
+- **Freshness & Sorting Mechanics (`time_updated` + `from_time`):** Probing the API confirmed that `sort_field=submitdate` is an unaccepted parameter that falls back to default sorting. Furthermore, `reverse_sort=true` reverses `time_updated` from descending (newest first) to ascending (oldest first, e.g. 2022-2025 projects). Descending `time_updated` order combined with server-side `from_time = now - max_gig_age_minutes` returns verified fresh gigs posted within minutes/hours.
+- **Status Filter on Active Projects:** Checked official Freelancer documentation; no query parameter exists for project status on the `/projects/0.1/projects/active/` endpoint. Local filtering of `status != "active"` is retained.
+- **Dual-Currency Budget Normalization & Display:** Added `budget_min_usd` and `budget_max_usd` to `Gig`. For fixed projects, `budget_usd_est` is computed as the midpoint between min and max USD. For hourly projects, `budget_usd_est` is `None` (preserving hourly rate ranges). `format_budget_display()` renders both original and USD estimates (e.g. `GBP 250 - 750 (~$333-$1000)` and `$25-$50/hr`).
+- **CLI Default Freshness:** `gigradar scrape-once freelancer` automatically filters by `max_gig_age_minutes` (passing `since` to `list_new_gigs`), reflecting production behavior. An `--all` flag disables this filter.
 - **Server-Side + Local Exclusions:** The parser excludes listings flagged as `upgrades.NDA=True`, `local=True`, `upgrades.recruiter=True`, `assisted=True`, or `type="contest"`.
 - **Zero-Extra-Network Detail Fetch:** Active project listing queries with `full_description=true` and `job_details=true` already return complete project records; `FreelancerClient` caches these parsed `Gig`s so `fetch_gig_detail(stub)` resolves instantly with zero extra HTTP requests.
 
@@ -228,12 +237,12 @@ uv run gigradar scrape-once freelancer --limit 5
 - **High Project Volume:** Freelancer projects receive dozens of bids within minutes. The platform-specific `max_existing_bids: 40` and shorter `max_gig_age_minutes: 360` correctly prevent chasing stale projects.
 
 #### 6. Questions for owner
-- None at this stage. All requirements and acceptance criteria for Phase 1b are satisfied.
+- None at this stage. All requirements and acceptance criteria for Phase 1b and its refinement fixes are satisfied.
 
 #### 7. Proposed next phase and inputs needed
 - **Phase 2: Storage, dedupe, scheduling** (SQLAlchemy models, Alembic migrations, repositories, idempotent upserts, bid-count snapshots, APScheduler background runner with jitter, and circuit breaker).
 - *Inputs needed:* None. Can begin Phase 2.
 
 #### 8. Handoff note
-Phase 1b is complete. `FreelancerClient` queries the official Freelancer REST API using `PoliteHttpClient` with server-side skill filtering and deduplication. The pure-function parser correctly normalizes multicurrency budgets to USD via live API exchange rates and handles hourly projects cleanly. All 101 tests pass, linters and strict mypy are green, and `gigradar scrape-once freelancer --limit 5` works live. Ready for **Phase 2** (Storage, dedupe, scheduling).
+Phase 1b and all post-live-run fixes are complete. `FreelancerClient` queries the official Freelancer REST API using `PoliteHttpClient` with server-side skill filtering, verified `from_time` freshness filtering, and local deduplication. The pure-function parser normalizes multicurrency budgets to USD via live API exchange rates with dual-currency display formatting, midpoint estimates for fixed projects, and unit-safe handling of hourly rates. All 107 tests pass, linters and strict mypy are green, and `gigradar scrape-once freelancer --limit 5` surfaces fresh live gigs posted within minutes/hours. Ready for **Phase 2** (Storage, dedupe, scheduling).
 

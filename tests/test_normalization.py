@@ -6,6 +6,7 @@ import pytest
 
 from gigradar.platforms.common.normalization import (
     detect_language,
+    format_budget_display,
     normalize_digits,
     parse_bids_count,
     parse_budget_range,
@@ -99,7 +100,6 @@ def test_parse_datetime_or_relative_unrecognized_returns_none() -> None:
     assert parse_datetime_or_relative("garbage string", datetime_attr=None) is None
 
 
-
 @pytest.mark.parametrize(
     ("text", "expected_min", "expected_max", "expected_curr"),
     [
@@ -155,3 +155,56 @@ def test_parse_bids_count(text: str, expected: int) -> None:
 )
 def test_detect_language(text: str, expected: str) -> None:
     assert detect_language(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        # 1. Fixed range (USD)
+        (
+            {"budget_min": 100.0, "budget_max": 250.0, "currency": "USD", "project_type": "fixed"},
+            "$100 - $250",
+        ),
+        # 2. Single value (USD)
+        (
+            {"budget_min": 100.0, "budget_max": None, "currency": "USD", "project_type": "fixed"},
+            "$100",
+        ),
+        # 3. Non-USD range
+        (
+            {
+                "budget_min": 150.0,
+                "budget_max": 220.0,
+                "currency": "EUR",
+                "budget_min_usd": 168.0,
+                "budget_max_usd": 247.0,
+                "project_type": "fixed",
+            },
+            "EUR 150 - 220 (~$168-$247)",
+        ),
+        # 4. Hourly (USD)
+        (
+            {"budget_min": 8.0, "budget_max": 15.0, "currency": "USD", "project_type": "hourly"},
+            "$8-$15/hr",
+        ),
+        # 5. Hourly (non-USD range)
+        (
+            {
+                "budget_min": 1500.0,
+                "budget_max": 3500.0,
+                "currency": "INR",
+                "budget_min_usd": 15.8,
+                "budget_max_usd": 36.86,
+                "project_type": "hourly",
+            },
+            "INR 1500 - 3500/hr (~$16-$37/hr)",
+        ),
+        # 6. Missing budget
+        (
+            {"budget_min": None, "budget_max": None, "currency": "USD", "project_type": "fixed"},
+            "-",
+        ),
+    ],
+)
+def test_format_budget_display(kwargs: dict[str, object], expected: str) -> None:
+    assert format_budget_display(**kwargs) == expected  # type: ignore[arg-type]

@@ -65,7 +65,9 @@ def test_cli_scrape_once_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
         language="ar",
     )
 
-    async def mock_run_scrape_once(platform_name: str, limit: int, fetch_details: bool) -> list[Gig]:
+    async def mock_run_scrape_once(
+        platform_name: str, limit: int, fetch_details: bool, all_gigs: bool = False
+    ) -> list[Gig]:
         return [sample_gig]
 
     monkeypatch.setattr(cli_module, "_run_scrape_once", mock_run_scrape_once)
@@ -96,7 +98,9 @@ def test_cli_scrape_once_bids_count_none_displays_dash(monkeypatch: pytest.Monke
         language="ar",
     )
 
-    async def mock_run_scrape_once(platform_name: str, limit: int, fetch_details: bool) -> list[Gig]:
+    async def mock_run_scrape_once(
+        platform_name: str, limit: int, fetch_details: bool, all_gigs: bool = False
+    ) -> list[Gig]:
         return [sample_gig]
 
     monkeypatch.setattr(cli_module, "_run_scrape_once", mock_run_scrape_once)
@@ -121,7 +125,9 @@ def test_cli_scrape_once_freelancer(monkeypatch: pytest.MonkeyPatch) -> None:
         budget_min=10.0,
         budget_max=20.0,
         currency="GBP",
-        budget_usd_est=13.33,
+        budget_min_usd=13.33,
+        budget_max_usd=26.66,
+        budget_usd_est=20.0,
         bids_count=31,
         posted_at=None,
         client_name=None,
@@ -129,7 +135,9 @@ def test_cli_scrape_once_freelancer(monkeypatch: pytest.MonkeyPatch) -> None:
         project_type="fixed",
     )
 
-    async def mock_run_scrape_once(platform_name: str, limit: int, fetch_details: bool) -> list[Gig]:
+    async def mock_run_scrape_once(
+        platform_name: str, limit: int, fetch_details: bool, all_gigs: bool = False
+    ) -> list[Gig]:
         return [freelancer_gig]
 
     monkeypatch.setattr(cli_module, "_run_scrape_once", mock_run_scrape_once)
@@ -139,6 +147,10 @@ def test_cli_scrape_once_freelancer(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "40773380" in result.stdout
     assert "Freelancer" in result.stdout
     assert "GBP 10 - 20" in result.stdout
-    assert "$13.33" in result.stdout
+    assert "(~$13-$27)" in result.stdout
     assert "31" in result.stdout
 
+    # Test --all flag
+    result_all = runner.invoke(app, ["scrape-once", "freelancer", "--limit", "1", "--all"])
+    assert result_all.exit_code == 0
+    assert "40773380" in result_all.stdout

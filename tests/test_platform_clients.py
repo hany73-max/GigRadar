@@ -36,7 +36,9 @@ async def test_mostaql_client_list_and_detail() -> None:
 
     transport = httpx.MockTransport(handler)
     http_client = PoliteHttpClient(
-        rate_limiter=RateLimiter(min_interval_seconds=0.0, jitter_min_seconds=0.0, jitter_max_seconds=0.0)
+        rate_limiter=RateLimiter(
+            min_interval_seconds=0.0, jitter_min_seconds=0.0, jitter_max_seconds=0.0
+        )
     )
     http_client._client = httpx.AsyncClient(transport=transport)
 
@@ -65,7 +67,9 @@ async def test_khamsat_client_list_and_detail() -> None:
 
     transport = httpx.MockTransport(handler)
     http_client = PoliteHttpClient(
-        rate_limiter=RateLimiter(min_interval_seconds=0.0, jitter_min_seconds=0.0, jitter_max_seconds=0.0)
+        rate_limiter=RateLimiter(
+            min_interval_seconds=0.0, jitter_min_seconds=0.0, jitter_max_seconds=0.0
+        )
     )
     http_client._client = httpx.AsyncClient(transport=transport)
 
@@ -94,7 +98,9 @@ async def test_mostaql_health_check_failure() -> None:
 
     transport = httpx.MockTransport(handler)
     http_client = PoliteHttpClient(
-        rate_limiter=RateLimiter(min_interval_seconds=0.0, jitter_min_seconds=0.0, jitter_max_seconds=0.0),
+        rate_limiter=RateLimiter(
+            min_interval_seconds=0.0, jitter_min_seconds=0.0, jitter_max_seconds=0.0
+        ),
         max_retries=1,
     )
     http_client._client = httpx.AsyncClient(transport=transport)
@@ -119,7 +125,9 @@ async def test_freelancer_client_list_and_detail() -> None:
 
     transport = httpx.MockTransport(handler)
     http_client = PoliteHttpClient(
-        rate_limiter=RateLimiter(min_interval_seconds=0.0, jitter_min_seconds=0.0, jitter_max_seconds=0.0)
+        rate_limiter=RateLimiter(
+            min_interval_seconds=0.0, jitter_min_seconds=0.0, jitter_max_seconds=0.0
+        )
     )
     http_client._client = httpx.AsyncClient(transport=transport)
 
@@ -138,7 +146,9 @@ async def test_freelancer_client_list_and_detail() -> None:
     assert gig.platform_id == "freelancer"
     assert gig.external_id == "40773380"
     assert gig.currency == "GBP"
-    assert gig.budget_usd_est == 13.33
+    assert gig.budget_min_usd == 13.33
+    assert gig.budget_max_usd == 26.66
+    assert gig.budget_usd_est == 20.0
 
     health = await client.health_check()
     assert health.is_healthy is True
@@ -152,7 +162,9 @@ async def test_freelancer_health_check_failure() -> None:
 
     transport = httpx.MockTransport(handler)
     http_client = PoliteHttpClient(
-        rate_limiter=RateLimiter(min_interval_seconds=0.0, jitter_min_seconds=0.0, jitter_max_seconds=0.0),
+        rate_limiter=RateLimiter(
+            min_interval_seconds=0.0, jitter_min_seconds=0.0, jitter_max_seconds=0.0
+        ),
         max_retries=1,
     )
     http_client._client = httpx.AsyncClient(transport=transport)
@@ -162,4 +174,3 @@ async def test_freelancer_health_check_failure() -> None:
     assert health.is_healthy is False
     assert "Health check failed" in health.message or "returned HTTP 500" in health.message
     await client.close()
-

@@ -65,7 +65,9 @@ def doctor(
     has_placeholder = False
 
     # 1. Configuration Files
-    config_table = Table(title="Configuration Files (YAML)", show_header=True, header_style="bold magenta")
+    config_table = Table(
+        title="Configuration Files (YAML)", show_header=True, header_style="bold magenta"
+    )
     config_table.add_column("Config File", style="cyan", width=25)
     config_table.add_column("Status", width=15)
     config_table.add_column("Details", style="dim")
@@ -94,10 +96,16 @@ def doctor(
         raw_tg = settings.telegram_bot_token.get_secret_value()
         if is_placeholder(raw_tg):
             has_placeholder = True
-            env_table.add_row("TELEGRAM_BOT_TOKEN", "[yellow]PLACEHOLDER[/yellow]", "Example token from .env.example")
+            env_table.add_row(
+                "TELEGRAM_BOT_TOKEN",
+                "[yellow]PLACEHOLDER[/yellow]",
+                "Example token from .env.example",
+            )
         else:
             masked_tg = mask_key(raw_tg)
-            env_table.add_row("TELEGRAM_BOT_TOKEN", f"[green]Configured[/green] ({masked_tg})", "Ready")
+            env_table.add_row(
+                "TELEGRAM_BOT_TOKEN", f"[green]Configured[/green] ({masked_tg})", "Ready"
+            )
     else:
         env_table.add_row("TELEGRAM_BOT_TOKEN", "[yellow]Not Set[/yellow]", "Needed for Phase 4")
 
@@ -110,12 +118,20 @@ def doctor(
                 "Example chat ID from .env.example",
             )
         else:
-            env_table.add_row("TELEGRAM_ALLOWED_CHAT_ID", str(settings.telegram_allowed_chat_id), "Whitelisted user")
+            env_table.add_row(
+                "TELEGRAM_ALLOWED_CHAT_ID",
+                str(settings.telegram_allowed_chat_id),
+                "Whitelisted user",
+            )
     else:
-        env_table.add_row("TELEGRAM_ALLOWED_CHAT_ID", "[yellow]Not Set[/yellow]", "Needed for Phase 4")
+        env_table.add_row(
+            "TELEGRAM_ALLOWED_CHAT_ID", "[yellow]Not Set[/yellow]", "Needed for Phase 4"
+        )
 
     # Pipeline params
-    env_table.add_row("SCORE_THRESHOLD", str(settings.score_threshold), "Min score for notification")
+    env_table.add_row(
+        "SCORE_THRESHOLD", str(settings.score_threshold), "Min score for notification"
+    )
     env_table.add_row("AUTO_SUBMIT", str(settings.auto_submit), "Safe default: False")
     env_table.add_row("LLM_MODEL_SCORER", settings.llm_model_scorer, "Flash-class scorer")
     env_table.add_row("LLM_MODEL_PITCH", settings.llm_model_pitch, "Pitch generator")
@@ -124,7 +140,9 @@ def doctor(
     console.print()
 
     # 3. Gemini API Live Key Verification
-    llm_table = Table(title="Google Gemini API Verification", show_header=True, header_style="bold magenta")
+    llm_table = Table(
+        title="Google Gemini API Verification", show_header=True, header_style="bold magenta"
+    )
     llm_table.add_column("Check", style="cyan", width=25)
     llm_table.add_column("Status", width=15)
     llm_table.add_column("Details", style="dim")
@@ -132,19 +150,29 @@ def doctor(
     raw_key = settings.gemini_api_key.get_secret_value() if settings.gemini_api_key else None
 
     if not raw_key:
-        llm_table.add_row("GEMINI_API_KEY", "[yellow]NOT SET[/yellow]", "Set GEMINI_API_KEY in .env")
+        llm_table.add_row(
+            "GEMINI_API_KEY", "[yellow]NOT SET[/yellow]", "Set GEMINI_API_KEY in .env"
+        )
         llm_table.add_row("Live Connectivity", "[yellow]SKIPPED[/yellow]", "No key provided")
     elif is_placeholder(raw_key):
         has_placeholder = True
-        llm_table.add_row("GEMINI_API_KEY", "[yellow]PLACEHOLDER[/yellow]", f"'{raw_key}' from .env.example")
-        llm_table.add_row("Live Connectivity", "[yellow]SKIPPED[/yellow]", "Placeholder key; add real key in .env")
+        llm_table.add_row(
+            "GEMINI_API_KEY", "[yellow]PLACEHOLDER[/yellow]", f"'{raw_key}' from .env.example"
+        )
+        llm_table.add_row(
+            "Live Connectivity", "[yellow]SKIPPED[/yellow]", "Placeholder key; add real key in .env"
+        )
     elif skip_live_llm:
         masked_gemini = mask_key(raw_key)
-        llm_table.add_row("GEMINI_API_KEY", f"[green]FOUND[/green] ({masked_gemini})", "Key present")
+        llm_table.add_row(
+            "GEMINI_API_KEY", f"[green]FOUND[/green] ({masked_gemini})", "Key present"
+        )
         llm_table.add_row("Live Connectivity", "[cyan]SKIPPED[/cyan]", "--skip-live-llm passed")
     else:
         masked_gemini = mask_key(raw_key)
-        llm_table.add_row("GEMINI_API_KEY", f"[green]FOUND[/green] ({masked_gemini})", "Key present")
+        llm_table.add_row(
+            "GEMINI_API_KEY", f"[green]FOUND[/green] ({masked_gemini})", "Key present"
+        )
         with console.status("[bold green]Contacting Gemini API...[/bold green]"):
             is_valid, msg = verify_gemini_key(raw_key, model_id=settings.llm_model_scorer)
         if is_valid:
@@ -158,7 +186,9 @@ def doctor(
 
     # Summary
     if all_passed and not has_placeholder and raw_key:
-        console.print("[bold green]Doctor check complete: System is healthy and fully configured![/bold green]\n")
+        console.print(
+            "[bold green]Doctor check complete: System is healthy and fully configured![/bold green]\n"
+        )
     elif all_passed and has_placeholder:
         console.print(
             "[bold yellow]Doctor check complete: Configurations valid. Replace PLACEHOLDER values in .env with your real credentials when ready.[/bold yellow]\n",
@@ -174,7 +204,14 @@ def doctor(
         raise typer.Exit(code=1)
 
 
-async def _run_scrape_once(platform_name: str, limit: int, fetch_details: bool) -> list[Any]:
+async def _run_scrape_once(
+    platform_name: str,
+    limit: int,
+    fetch_details: bool,
+    all_gigs: bool = False,
+) -> list[Any]:
+    from datetime import UTC, datetime, timedelta
+
     from gigradar.platforms.freelancer.client import FreelancerClient
     from gigradar.platforms.khamsat.client import KhamsatClient
     from gigradar.platforms.mostaql.client import MostaqlClient
@@ -211,7 +248,11 @@ async def _run_scrape_once(platform_name: str, limit: int, fetch_details: bool) 
     elif platform_lower == "freelancer":
         async with FreelancerClient() as client:
             client.config.max_pages_per_run = 1
-            stubs = await client.list_new_gigs()
+            since: datetime | None = None
+            if not all_gigs:
+                max_age_min = client.config.thresholds.max_gig_age_minutes
+                since = datetime.now(UTC) - timedelta(minutes=max_age_min)
+            stubs = await client.list_new_gigs(since=since)
             gigs = []
             for stub in stubs[:limit]:
                 gig = await client.fetch_gig_detail(stub)
@@ -219,7 +260,9 @@ async def _run_scrape_once(platform_name: str, limit: int, fetch_details: bool) 
             return gigs
 
     else:
-        raise ValueError(f"Unknown platform '{platform_name}'. Supported platforms: mostaql, khamsat, freelancer")
+        raise ValueError(
+            f"Unknown platform '{platform_name}'. Supported platforms: mostaql, khamsat, freelancer"
+        )
 
 
 @app.command(name="scrape-once")
@@ -239,9 +282,16 @@ def scrape_once(
         "--fetch-details/--no-details",
         help="Fetch full details for stubs (Mostaql only).",
     ),
+    all_gigs: bool = typer.Option(
+        False,
+        "--all",
+        help="Disable max_gig_age_minutes age filter and fetch all available gigs.",
+    ),
 ) -> None:
     """Scrape and print real parsed gigs from a platform in a readable table."""
     import asyncio
+
+    from gigradar.platforms.common.normalization import format_budget_display
 
     platform_lower = platform.lower().strip()
     if platform_lower not in {"mostaql", "khamsat", "freelancer"}:
@@ -250,10 +300,16 @@ def scrape_once(
         )
         raise typer.Exit(code=1)
 
-    console.print(f"\n[bold cyan]Scraping once from [green]{platform_lower}[/green] (limit: {limit})...[/bold cyan]\n")
+    console.print(
+        f"\n[bold cyan]Scraping once from [green]{platform_lower}[/green] (limit: {limit})...[/bold cyan]\n"
+    )
 
     try:
-        gigs = asyncio.run(_run_scrape_once(platform_lower, limit=limit, fetch_details=fetch_details))
+        gigs = asyncio.run(
+            _run_scrape_once(
+                platform_lower, limit=limit, fetch_details=fetch_details, all_gigs=all_gigs
+            )
+        )
     except Exception as exc:  # noqa: BLE001
         console.print(f"[bold red]Scraping failed:[/bold red] {exc}")
         raise typer.Exit(code=1) from None
@@ -272,27 +328,7 @@ def scrape_once(
     table.add_column("Lang")
 
     for gig in gigs:
-        unit = "/hr" if getattr(gig, "project_type", "fixed") == "hourly" else ""
-        if gig.currency == "USD":
-            if gig.budget_min and gig.budget_max:
-                budget_str = f"${gig.budget_min:g} - ${gig.budget_max:g}{unit}"
-            elif gig.budget_min:
-                budget_str = f"${gig.budget_min:g}{unit}"
-            else:
-                budget_str = "-"
-        else:
-            if gig.budget_min and gig.budget_max:
-                base_b = f"{gig.currency} {gig.budget_min:g} - {gig.budget_max:g}{unit}"
-            elif gig.budget_min:
-                base_b = f"{gig.currency} {gig.budget_min:g}{unit}"
-            else:
-                base_b = "-"
-
-            if gig.budget_usd_est is not None:
-                budget_str = f"{base_b} (~${gig.budget_usd_est:g}{unit})"
-            else:
-                budget_str = base_b
-
+        budget_str = format_budget_display(gig=gig)
         posted_str = gig.posted_at.strftime("%Y-%m-%d %H:%M") if gig.posted_at else "-"
         client_str = gig.client_name or "-"
         bids_str = str(gig.bids_count) if gig.bids_count is not None else "-"

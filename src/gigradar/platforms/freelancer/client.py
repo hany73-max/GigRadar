@@ -1,6 +1,6 @@
 """Freelancer.com platform client implementing PlatformClient via official REST API."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -89,16 +89,22 @@ class FreelancerClient:
     async def list_new_gigs(self, since: datetime | None = None) -> list[GigStub]:
         """Fetch active projects matching skills, newest first, deduplicated and filtered."""
         active_endpoint = f"{self.api_root}projects/active/"
-        logger.info("freelancer_fetching_active_projects", url=active_endpoint, skills_count=len(self.skill_ids))
+        logger.info(
+            "freelancer_fetching_active_projects",
+            url=active_endpoint,
+            skills_count=len(self.skill_ids),
+        )
 
         # Query 1: Skill IDs query
         params: list[tuple[str, str | int]] = [
             ("sort_field", "time_updated"),
-            ("reverse_sort", "true"),
             ("limit", max(10, min(100, 25 * max(1, self.config.max_pages_per_run)))),
             ("full_description", "true"),
             ("job_details", "true"),
         ]
+        if since:
+            params.append(("from_time", int(since.timestamp())))
+
         for skill_id in self.skill_ids:
             params.append(("jobs[]", skill_id))
 
@@ -133,6 +139,9 @@ class FreelancerClient:
             # Cache the parsed Gig so fetch_gig_detail requires zero additional network calls
             self._cached_gigs[proj_id] = parse_freelancer_project(raw_proj)
 
+        # Ensure newest projects are returned first
+        stubs.sort(key=lambda s: s.posted_at or datetime.min.replace(tzinfo=UTC), reverse=True)
+
         logger.info("freelancer_listing_completed", count=len(stubs))
         return stubs
 
@@ -151,7 +160,9 @@ class FreelancerClient:
         data = response.json()
         raw_proj = data.get("result")
         if not isinstance(raw_proj, dict):
-            raise ValueError(f"Invalid Freelancer project detail response for ID {stub.external_id}")
+            raise ValueError(
+                f"Invalid Freelancer project detail response for ID {stub.external_id}"
+            )
 
         gig = parse_freelancer_project(raw_proj)
         self._cached_gigs[stub.external_id] = gig

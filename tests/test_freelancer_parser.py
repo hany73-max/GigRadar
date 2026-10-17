@@ -29,8 +29,11 @@ def test_parse_freelancer_single_project_fixture() -> None:
     assert gig.budget_min == 10.0
     assert gig.budget_max == 20.0
     assert gig.currency == "GBP"
-    # 10.0 * 1.3328 = 13.328 -> 13.33
-    assert gig.budget_usd_est == 13.33
+    # 10.0 * 1.3328 = 13.33, 20.0 * 1.3328 = 26.66
+    assert gig.budget_min_usd == 13.33
+    assert gig.budget_max_usd == 26.66
+    # Midpoint of (13.33 + 26.66) / 2 = 20.0
+    assert gig.budget_usd_est == 20.0
     assert gig.bids_count == 31
     assert gig.posted_at is not None
     assert gig.posted_at.year == 2026
@@ -71,8 +74,11 @@ def test_parse_freelancer_active_response_and_hourly() -> None:
     assert hg.currency == "INR"
     assert hg.budget_min == 1500.0
     assert hg.budget_max == 3500.0
-    # 1500 * 0.010531 = 15.7965 -> 15.8
-    assert hg.budget_usd_est == 15.8
+    # 1500 * 0.010531 = 15.8, 3500 * 0.010531 = 36.86
+    assert hg.budget_min_usd == 15.8
+    assert hg.budget_max_usd == 36.86
+    # Hourly projects must have budget_usd_est set to None
+    assert hg.budget_usd_est is None
     assert "hourly_project_info" in hg.client_stats
 
 
@@ -89,7 +95,13 @@ def test_is_excluded_project_flags() -> None:
     assert excluded and reason == "contest"
 
     # 3. NDA
-    nda_proj = {"id": 3, "title": "NDA Job", "type": "fixed", "status": "active", "upgrades": {"NDA": True}}
+    nda_proj = {
+        "id": 3,
+        "title": "NDA Job",
+        "type": "fixed",
+        "status": "active",
+        "upgrades": {"NDA": True},
+    }
     excluded, reason = is_excluded_project(nda_proj)
     assert excluded and reason == "nda"
 
@@ -99,7 +111,13 @@ def test_is_excluded_project_flags() -> None:
     assert excluded and reason == "local_job"
 
     # 5. Recruiter
-    recruiter_proj = {"id": 5, "title": "Recruiter Job", "type": "fixed", "status": "active", "upgrades": {"recruiter": True}}
+    recruiter_proj = {
+        "id": 5,
+        "title": "Recruiter Job",
+        "type": "fixed",
+        "status": "active",
+        "upgrades": {"recruiter": True},
+    }
     excluded, reason = is_excluded_project(recruiter_proj)
     assert excluded and reason == "recruiter"
 

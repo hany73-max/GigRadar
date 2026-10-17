@@ -2,7 +2,7 @@
 
 import re
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 
 # Translation table for Arabic-Indic and Eastern Arabic-Indic numerals
 ARABIC_INDIC_DIGITS = "٠١٢٣٤٥٦٧٨٩"
@@ -278,3 +278,65 @@ def detect_language(text: str) -> Literal["ar", "en", "mixed"]:
     if latin_ratio >= 0.70:
         return "en"
     return "mixed"
+
+
+def format_budget_display(
+    budget_min: float | None = None,
+    budget_max: float | None = None,
+    currency: str = "USD",
+    budget_min_usd: float | None = None,
+    budget_max_usd: float | None = None,
+    project_type: str = "fixed",
+    *,
+    gig: Any = None,
+) -> str:
+    """Format budget information for CLI table display.
+
+    Formatting rules:
+    - Hourly USD range: "$8-$15/hr"
+    - Hourly USD single: "$15/hr"
+    - Hourly non-USD range: "INR 1500 - 3500/hr (~$16-$37/hr)"
+    - USD fixed range: "$100 - $250"
+    - USD fixed single value: "$100"
+    - Non-USD fixed range: "EUR 150 - 220 (~$168-$247)"
+    - Non-USD fixed single value: "EUR 150 (~$168)"
+    - Missing budget: "-"
+    """
+    if gig is not None:
+        budget_min = getattr(gig, "budget_min", None)
+        budget_max = getattr(gig, "budget_max", None)
+        currency = getattr(gig, "currency", "USD")
+        budget_min_usd = getattr(gig, "budget_min_usd", None)
+        budget_max_usd = getattr(gig, "budget_max_usd", None)
+        project_type = getattr(gig, "project_type", "fixed")
+
+    unit = "/hr" if project_type == "hourly" else ""
+
+    if currency == "USD":
+        if budget_min is not None and budget_max is not None:
+            if project_type == "hourly":
+                return f"${budget_min:g}-${budget_max:g}/hr"
+            return f"${budget_min:g} - ${budget_max:g}"
+        if budget_min is not None:
+            return f"${budget_min:g}{unit}"
+        if budget_max is not None:
+            return f"${budget_max:g}{unit}"
+        return "-"
+
+    # Non-USD
+    if budget_min is not None and budget_max is not None:
+        base = f"{currency} {budget_min:g} - {budget_max:g}{unit}"
+        if budget_min_usd is not None and budget_max_usd is not None:
+            return f"{base} (~${round(budget_min_usd):g}-${round(budget_max_usd):g}{unit})"
+        return base
+    if budget_min is not None:
+        base = f"{currency} {budget_min:g}{unit}"
+        if budget_min_usd is not None:
+            return f"{base} (~${round(budget_min_usd):g}{unit})"
+        return base
+    if budget_max is not None:
+        base = f"{currency} {budget_max:g}{unit}"
+        if budget_max_usd is not None:
+            return f"{base} (~${round(budget_max_usd):g}{unit})"
+        return base
+    return "-"

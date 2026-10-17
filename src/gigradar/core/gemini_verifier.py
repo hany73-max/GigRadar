@@ -50,12 +50,18 @@ def verify_gemini_key(api_key: str | None, model_id: str = "gemini-2.5-flash") -
         (is_valid, details_message)
     """
     if not api_key or not api_key.strip():
-        return False, "GEMINI_API_KEY is not set. Please provide it in your .env file or environment."
+        return (
+            False,
+            "GEMINI_API_KEY is not set. Please provide it in your .env file or environment.",
+        )
 
     clean_key = api_key.strip()
 
     if is_placeholder(clean_key):
-        return False, f"Placeholder GEMINI_API_KEY detected ('{clean_key}'). Replace with your real key in .env."
+        return (
+            False,
+            f"Placeholder GEMINI_API_KEY detected ('{clean_key}'). Replace with your real key in .env.",
+        )
 
     try:
         from google import genai

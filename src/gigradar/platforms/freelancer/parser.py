@@ -127,15 +127,34 @@ def parse_freelancer_project(data: dict[str, Any]) -> Gig:
     currency_code = str(curr_info.get("code") or "USD").upper()
     exchange_rate = curr_info.get("exchange_rate")
 
-    budget_usd_est: float | None = None
+    rate: float | None = None
     if exchange_rate is not None and float(exchange_rate) > 0:
         rate = float(exchange_rate)
-        if budget_min is not None:
-            budget_usd_est = round(budget_min * rate, 2)
-        elif budget_max is not None:
-            budget_usd_est = round(budget_max * rate, 2)
     elif currency_code == "USD":
-        budget_usd_est = budget_min if budget_min is not None else budget_max
+        rate = 1.0
+
+    budget_min_usd: float | None = None
+    budget_max_usd: float | None = None
+    budget_usd_est: float | None = None
+
+    if rate is not None:
+        if budget_min is not None:
+            budget_min_usd = round(budget_min * rate, 2)
+        if budget_max is not None:
+            budget_max_usd = round(budget_max * rate, 2)
+
+    if project_type == "hourly":
+        # For hourly projects keep the hourly rate range in budget_min_usd/budget_max_usd,
+        # set budget_usd_est to None, and rely on project_type
+        budget_usd_est = None
+    else:
+        # Fixed projects: budget_usd_est becomes the midpoint when both exist, otherwise whichever exists
+        if budget_min_usd is not None and budget_max_usd is not None:
+            budget_usd_est = round((budget_min_usd + budget_max_usd) / 2.0, 2)
+        elif budget_min_usd is not None:
+            budget_usd_est = budget_min_usd
+        elif budget_max_usd is not None:
+            budget_usd_est = budget_max_usd
 
     # Bid stats
     bid_stats = data.get("bid_stats") or {}
@@ -185,6 +204,8 @@ def parse_freelancer_project(data: dict[str, Any]) -> Gig:
         budget_min=budget_min,
         budget_max=budget_max,
         currency=currency_code,
+        budget_min_usd=budget_min_usd,
+        budget_max_usd=budget_max_usd,
         budget_usd_est=budget_usd_est,
         bids_count=bids_count,
         posted_at=posted_at,

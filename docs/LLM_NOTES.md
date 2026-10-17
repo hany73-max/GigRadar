@@ -11,6 +11,7 @@ This document contains implementation details regarding the Google Gemini API in
 - **Client Initialization:**
   ```python
   from google import genai
+
   client = genai.Client(api_key=settings.gemini_api_key.get_secret_value())
   ```
 - **Async Execution:** Asynchronous operations are supported via `client.aio.models`.
@@ -23,6 +24,7 @@ This document contains implementation details regarding the Google Gemini API in
   When a live API key is configured in `.env`, the exact active models available to your key should be discovered and recorded using:
   ```python
   from google import genai
+
   client = genai.Client()
   for model in client.models.list():
       print(model.name)
@@ -72,6 +74,7 @@ Tested with `google-genai` v2.31.0 and Pydantic v2:
 from google import genai
 from pydantic import BaseModel, Field
 
+
 class GigScoreSchema(BaseModel):
     match_score: int = Field(ge=0, le=100)
     domain: str
@@ -79,6 +82,7 @@ class GigScoreSchema(BaseModel):
     tier: str
     feasibility: str
     reasoning: str
+
 
 client = genai.Client(api_key="...")
 

@@ -209,9 +209,10 @@ Common interface:
 ```python
 class PlatformClient(Protocol):
     name: str
+
     async def list_new_gigs(self, since: datetime | None) -> list[GigStub]: ...
     async def fetch_gig_detail(self, stub: GigStub) -> Gig: ...
-    async def health_check(self) -> HealthReport: ...   # detects layout drift
+    async def health_check(self) -> HealthReport: ...  # detects layout drift
 ```
 
 Requirements:

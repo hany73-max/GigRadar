@@ -34,7 +34,9 @@ def parse_khamsat_listing(html: str, base_url: str = "https://khamsat.com") -> l
     for index, row in enumerate(rows):
         link_el = row.select_one("td.details-td h3.details-head a")
         if not link_el:
-            raise ValueError(f"Khamsat listing row #{index} missing required title link ('h3.details-head a')")
+            raise ValueError(
+                f"Khamsat listing row #{index} missing required title link ('h3.details-head a')"
+            )
 
         title = link_el.get_text(strip=True)
         if not title:
@@ -60,7 +62,9 @@ def parse_khamsat_listing(html: str, base_url: str = "https://khamsat.com") -> l
                 external_id = url_match.group(1)
 
         if not external_id:
-            raise ValueError(f"Khamsat listing row #{index} could not extract external_id from row or URL: {href}")
+            raise ValueError(
+                f"Khamsat listing row #{index} could not extract external_id from row or URL: {href}"
+            )
 
         # Buyer / user name
         user_el = row.select_one("td.details-td ul.details-list li a.user")
@@ -105,6 +109,8 @@ def parse_khamsat_gig_from_stub(stub: GigStub, raw_html: str | None = None) -> G
         budget_min=None,
         budget_max=None,
         currency="USD",
+        budget_min_usd=None,
+        budget_max_usd=None,
         budget_usd_est=None,
         bids_count=stub.bids_count,
         posted_at=stub.posted_at,

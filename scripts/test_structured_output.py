@@ -18,10 +18,14 @@ def main() -> int:
     key = settings.gemini_api_key.get_secret_value() if settings.gemini_api_key else ""
 
     if not key or key in ("your_gemini_api_key_here", "<unset>"):
-        print(f"[SKIP] No real GEMINI_API_KEY set (current: {mask_key(key)}). Skipping live API call.")
+        print(
+            f"[SKIP] No real GEMINI_API_KEY set (current: {mask_key(key)}). Skipping live API call."
+        )
         return 0
 
-    print(f"[INFO] Real key found ({mask_key(key)}). Testing structured output on model: {settings.llm_model_scorer}...")
+    print(
+        f"[INFO] Real key found ({mask_key(key)}). Testing structured output on model: {settings.llm_model_scorer}..."
+    )
     try:
         from google import genai
 

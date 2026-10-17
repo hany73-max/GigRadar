@@ -48,6 +48,9 @@ def test_parse_mostaql_detail_fixture() -> None:
     assert gig.budget_min == 50.0
     assert gig.budget_max == 100.0
     assert gig.currency == "USD"
+    assert gig.budget_min_usd == 50.0
+    assert gig.budget_max_usd == 100.0
+    assert gig.budget_usd_est == 75.0
     assert gig.deadline_text is not None and "7" in gig.deadline_text
     assert gig.posted_at is not None
     assert gig.category_raw == "برمجة، تطوير المواقع والتطبيقات"

@@ -122,7 +122,9 @@ def parse_mostaql_detail(
         raise ValueError(f"Mostaql detail page could not determine external_id from URL: {url}")
 
     # 2. Title
-    title_el = soup.select_one('h1.heada__title [data-type="page-header-title"]') or soup.select_one("h1.heada__title")
+    title_el = soup.select_one(
+        'h1.heada__title [data-type="page-header-title"]'
+    ) or soup.select_one("h1.heada__title")
     title = title_el.get_text(strip=True) if title_el else (stub.title if stub else None)
     if not title:
         raise ValueError(f"Mostaql detail page #{external_id} missing required title")
@@ -173,7 +175,9 @@ def parse_mostaql_detail(
 
     # 8. Category
     category_raw: str | None = None
-    cat_el = soup.select_one('ol.breadcrumb li[data-index="2"] a') or soup.select_one('ol.breadcrumb li[data-index="2"]')
+    cat_el = soup.select_one('ol.breadcrumb li[data-index="2"] a') or soup.select_one(
+        'ol.breadcrumb li[data-index="2"]'
+    )
     if cat_el:
         category_raw = cat_el.get_text(strip=True)
 
@@ -216,7 +220,13 @@ def parse_mostaql_detail(
         budget_min=budget_min,
         budget_max=budget_max,
         currency=currency,
-        budget_usd_est=budget_max or budget_min,
+        budget_min_usd=budget_min,
+        budget_max_usd=budget_max,
+        budget_usd_est=(
+            round((budget_min + budget_max) / 2.0, 2)
+            if budget_min is not None and budget_max is not None
+            else (budget_min or budget_max)
+        ),
         bids_count=bids_count,
         posted_at=posted_at,
         deadline_text=deadline_text,

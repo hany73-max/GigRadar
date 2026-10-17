@@ -97,7 +97,7 @@ class PlatformThresholds(BaseModel):
 class PlatformSettings(BaseModel):
     name: str
     enabled: bool = True
-    type: str # "scraper" or "api"
+    type: str  # "scraper" or "api"
     base_url: str
     listing_url: str | None = None
     base_api_url: str | None = None

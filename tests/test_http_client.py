@@ -14,7 +14,9 @@ from gigradar.platforms.common.http_client import (
 
 @pytest.mark.asyncio
 async def test_rate_limiter_spacing() -> None:
-    limiter = RateLimiter(min_interval_seconds=0.1, jitter_min_seconds=0.01, jitter_max_seconds=0.05)
+    limiter = RateLimiter(
+        min_interval_seconds=0.1, jitter_min_seconds=0.01, jitter_max_seconds=0.05
+    )
     t0 = time.monotonic()
     await limiter.wait()
     await limiter.wait()
@@ -72,7 +74,9 @@ async def test_polite_http_client_get_success() -> None:
 
     transport = httpx.MockTransport(handler)
     client = PoliteHttpClient(
-        rate_limiter=RateLimiter(min_interval_seconds=0.0, jitter_min_seconds=0.0, jitter_max_seconds=0.0)
+        rate_limiter=RateLimiter(
+            min_interval_seconds=0.0, jitter_min_seconds=0.0, jitter_max_seconds=0.0
+        )
     )
     client._client = httpx.AsyncClient(transport=transport)
 
@@ -95,7 +99,9 @@ async def test_polite_http_client_retries_on_503() -> None:
 
     transport = httpx.MockTransport(handler)
     client = PoliteHttpClient(
-        rate_limiter=RateLimiter(min_interval_seconds=0.0, jitter_min_seconds=0.0, jitter_max_seconds=0.0),
+        rate_limiter=RateLimiter(
+            min_interval_seconds=0.0, jitter_min_seconds=0.0, jitter_max_seconds=0.0
+        ),
         max_retries=3,
     )
     client._client = httpx.AsyncClient(transport=transport)

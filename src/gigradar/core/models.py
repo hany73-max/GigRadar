@@ -30,6 +30,8 @@ class Gig(BaseModel):
     budget_min: float | None = None
     budget_max: float | None = None
     currency: str = "USD"
+    budget_min_usd: float | None = None
+    budget_max_usd: float | None = None
     budget_usd_est: float | None = None
     bids_count: int | None = None
     posted_at: datetime | None = None

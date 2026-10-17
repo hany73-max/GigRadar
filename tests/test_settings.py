@@ -26,4 +26,3 @@ def test_settings_env_override(monkeypatch: object) -> None:
     assert settings.auto_submit is True
     assert settings.llm_model_scorer == "gemini-1.5-flash"
     mp.undo()
-
