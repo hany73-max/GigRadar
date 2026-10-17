@@ -1,0 +1,51 @@
+owner:
+  name: "Hany Elashry"
+  title: "ML Engineer"
+  location: "Egypt"
+  seniority: "Junior"
+  education: "B.Sc. student in Navigation & Space Technology"
+  languages:
+    - language: "Arabic"
+      proficiency: "Native"
+    - language: "English"
+      proficiency: "C1"
+
+skill_tiers:
+  tier_a:
+    description: "Core strengths - accept confidently"
+    skills:
+      - "Python (advanced)"
+      - "NumPy (expert)"
+      - "Pandas"
+      - "SQL"
+      - "Classical/tabular ML (scikit-learn, XGBoost, feature engineering, imbalanced classification, threshold tuning, hyperparameter search)"
+      - "Data engineering (ETL pipelines, PostgreSQL, MySQL, MongoDB, SQLAlchemy ORM, schema design, data cleaning, deduplication)"
+      - "Web scraping and data collection pipelines"
+      - "Model deployment (FastAPI REST APIs, Streamlit dashboards, Railway, Streamlit Cloud)"
+      - "Dashboards and visualization (Matplotlib, Plotly, Streamlit)"
+      - "From-scratch ML in NumPy (forward/backward pass derivations)"
+      - "Signal processing / DSP / FMCW radar simulation, MATLAB"
+
+  tier_b:
+    description: "Actively growing - accept when scope is standard"
+    skills:
+      - "PyTorch fundamentals, CNNs, custom Dataset/DataLoader training pipelines"
+      - "Computer vision: image classification, transfer learning/fine-tuning (ResNet, EfficientNet), object detection (YOLO), OCR"
+      - "NLP: text classification, sentiment analysis, embeddings, pretrained transformers (HuggingFace), Arabic NLP basics"
+      - "LLM application work: RAG, prompt pipelines, API integration (flag as llm_wrapper)"
+
+  tier_c:
+    description: "Out of reach for now - reject or mark stretch_risky"
+    skills:
+      - "Novel research, training large models from scratch, large-scale distributed training"
+      - "Production MLOps at scale, Kubernetes, enterprise deployments"
+      - "Mobile/edge deployment, real-time video at scale, reinforcement learning"
+      - "Pure web development, WordPress, Shopify, mobile apps, graphic design, writing"
+
+hard_rejects:
+  - "Academic cheating / homework / assignment / thesis / exam solving"
+  - "Unpaid trials, 'test task first', or 'free sample'"
+  - "Pure web development / WordPress / Shopify / mobile apps with no ML or data component"
+  - "Budgets below the minimum ($25 USD) unless scope is trivially tiny"
+  - "Gigs requiring guaranteed accuracy ('99% guaranteed') with no dataset"
+  - "Bypassing platform rules, fake reviews, spam bots, account farming, scraping personal data illegally, cracking"

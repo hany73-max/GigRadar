@@ -1,0 +1,162 @@
+thresholds:
+  min_budget_usd: 25.0
+  max_existing_bids: 30
+  max_gig_age_minutes: 1440 # 24 hours
+
+keyword_families:
+  ml_dl:
+    name: "Machine Learning & Deep Learning"
+    keywords:
+      - "machine learning"
+      - "deep learning"
+      - "تعلم آلي"
+      - "تعلم الة"
+      - "تعلم عميق"
+      - "ذكاء اصطناعي"
+      - "نموذج"
+      - "تدريب نموذج"
+      - "model training"
+      - "neural network"
+      - "شبكة عصبية"
+      - "pytorch"
+      - "tensorflow"
+      - "keras"
+      - "scikit-learn"
+      - "xgboost"
+      - "fine-tune"
+      - "تحسين نموذج"
+      - "classification"
+      - "تصنيف"
+      - "regression"
+      - "prediction"
+      - "تنبؤ"
+      - "forecasting"
+      - "time series"
+      - "anomaly detection"
+
+  cv:
+    name: "Computer Vision"
+    keywords:
+      - "computer vision"
+      - "رؤية حاسوبية"
+      - "image classification"
+      - "تصنيف صور"
+      - "object detection"
+      - "كشف الكائنات"
+      - "yolo"
+      - "ocr"
+      - "segmentation"
+      - "face recognition"
+      - "cnn"
+
+  nlp:
+    name: "Natural Language Processing"
+    keywords:
+      - "nlp"
+      - "معالجة اللغة الطبيعية"
+      - "sentiment"
+      - "تحليل المشاعر"
+      - "text classification"
+      - "تصنيف نصوص"
+      - "transformers"
+      - "bert"
+      - "embeddings"
+      - "arabic nlp"
+      - "chatbot"
+      - "rag"
+      - "llm"
+      - "summarization"
+
+  data:
+    name: "Data Engineering & Analysis"
+    keywords:
+      - "etl"
+      - "data pipeline"
+      - "data cleaning"
+      - "تنظيف بيانات"
+      - "scraping"
+      - "سحب بيانات"
+      - "web scraping"
+      - "postgresql"
+      - "sql"
+      - "pandas"
+      - "dashboard"
+      - "لوحة تحكم"
+      - "streamlit"
+      - "power bi"
+      - "data analysis"
+      - "تحليل بيانات"
+
+  backend_deploy:
+    name: "Backend & Model Deployment"
+    keywords:
+      - "fastapi"
+      - "rest api"
+      - "deploy model"
+      - "نشر نموذج"
+      - "docker"
+
+hard_rejects:
+  academic:
+    - "واجب"
+    - "مشروع تخرج"
+    - "بحث جامعي"
+    - "امتحان"
+    - "اختبار"
+    - "رسالة ماجستير"
+    - "أطروحة"
+    - "homework"
+    - "assignment"
+    - "thesis"
+    - "dissertation"
+    - "exam"
+    - "university project"
+    - "college assignment"
+
+  unpaid_or_trial:
+    - "عينة مجانية"
+    - "تجربة مجانية"
+    - "مهمة تجريبية بدون مقابل"
+    - "free sample"
+    - "free trial"
+    - "test task without payment"
+    - "unpaid test"
+
+  unethical_or_policy_violation:
+    - "حسابات وهمية"
+    - "تقييمات زائفة"
+    - "بوت سبام"
+    - "اختراق"
+    - "تخطي الحظر"
+    - "fake reviews"
+    - "spam bot"
+    - "account farming"
+    - "bypass captcha"
+    - "hack"
+    - "crack"
+
+  pure_irrelevant:
+    - "wordpress"
+    - "shopify"
+    - "woocommerce"
+    - "تصميم لوجو"
+    - "كتابة محتوى"
+    - "ترجمة كتب"
+    - "موشن جرافيك"
+    - "فلاتر"
+    - "flutter"
+    - "react native"
+    - "swift"
+    - "kotlin"
+
+category_rules:
+  deny_categories:
+    - "Design & Graphics"
+    - "Writing & Translation"
+    - "Mobile App Development"
+    - "Business Services"
+  allow_categories:
+    - "Data Science & Analysis"
+    - "Artificial Intelligence & Machine Learning"
+    - "Software Development"
+    - "Web Scraping"

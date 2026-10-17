@@ -1,0 +1,21 @@
+projects:
+  - id: sky_spy
+    title: "Sky-Spy: Exoplanet classification (NASA Space Apps, 3rd place)"
+    tags: [tabular_ml, xgboost, classification, fastapi, streamlit, deployment, hackathon, team_lead]
+    one_liner: "Led a team to 3rd place building a tuned XGBoost exoplanet classifier from Kepler data, deployed as a FastAPI backend plus Streamlit dashboard."
+  - id: kessler_shield
+    title: "Kessler-Shield: orbital collision early-warning"
+    tags: [tabular_ml, xgboost, imbalanced_data, threshold_tuning, fastapi, streamlit, deployment, mlops_debugging]
+    one_liner: "XGBoost pipeline handling ~1:1300 class imbalance without oversampling via precision-recall threshold tuning; deployed as two independent cloud services and debugged a train/serve library-version mismatch."
+  - id: ticketsense
+    title: "TicketSense: ETL pipeline for support tickets"
+    tags: [data_engineering, etl, postgresql, sqlalchemy, data_cleaning, schema_design]
+    one_liner: "Normalized a flat dataset into a relational schema, fixed 441 duplicate customers and unresolved template placeholders, and built a modular ETL pipeline with SQLAlchemy."
+  - id: ml_blueprint
+    title: "The ML Blueprint: from-scratch ML in NumPy"
+    tags: [ml_fundamentals, numpy, neural_network, math]
+    one_liner: "Derived core ML algorithms from first principles, including a neural network with manual forward and backward passes."
+  - id: fmcw_radar
+    title: "FMCW Radar Simulation Engine (ongoing)"
+    tags: [signal_processing, dsp, radar, cfar, cnn, simulation]
+    one_liner: "Leading the DSP pipeline of a 4-person team; completed range-velocity-angle data cube extraction, now working on CFAR detection and CNN-based target classification."

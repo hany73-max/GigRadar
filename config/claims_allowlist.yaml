@@ -1,0 +1,39 @@
+allowed_claims:
+  education:
+    - "B.Sc. student in Navigation & Space Technology"
+    - "Strong mathematical and fundamentals foundation"
+  experience_level:
+    - "Junior ML Engineer"
+    - "Practical hands-on experience building end-to-end pipelines and models"
+  languages:
+    - "Arabic native speaker"
+    - "Fluent English (C1 level)"
+  tabular_ml:
+    - "Proficient in Python, NumPy, Pandas, scikit-learn, XGBoost"
+    - "Experienced in feature engineering, hyperparameter tuning, and threshold tuning for imbalanced datasets"
+    - "3rd place winner in NASA Space Apps hackathon (team lead for Sky-Spy exoplanet classifier)"
+    - "Implemented Kessler-Shield orbital collision warning handling 1:1300 class imbalance"
+  data_engineering:
+    - "Built ETL pipelines with PostgreSQL, SQLAlchemy, MySQL, MongoDB"
+    - "Experienced in relational schema normalization, data cleaning, and deduplication"
+    - "Web scraping and automated data collection"
+  deployment:
+    - "FastAPI REST API development and model serving"
+    - "Interactive dashboards using Streamlit, Plotly, and Matplotlib"
+    - "Cloud deployment on Railway and Streamlit Cloud"
+  fundamentals_and_dsp:
+    - "Implemented core ML algorithms from scratch in NumPy (forward/backward passes)"
+    - "Signal processing and DSP experience (FMCW Radar simulation, CFAR, range-velocity data cubes, MATLAB)"
+  deep_learning:
+    - "I work with PyTorch and have built CNN training pipelines with custom datasets; I am currently deepening my deep-learning skills"
+    - "Fine-tuning pretrained computer vision models (ResNet, EfficientNet, basic YOLO)"
+    - "Working with HuggingFace transformers for text classification, embeddings, and sentiment analysis"
+
+forbidden_patterns:
+  - "\\b(?:\\d+|many|several)\\s+years\\s+(?:of\\s+)?(?:experience|working|in)\\b"
+  - "\\b(?:senior|lead|principal|director)\\s+(?:engineer|developer|scientist)\\b"
+  - "\\bproduction\\s+(?:DL|deep\\s+learning)\\s+systems?\\b"
+  - "\\bworked\\s+with\\s+(?:dozens|hundreds|many)\\s+clients?\\b"
+  - "\\b100%\\s*(?:guarantee|success|accuracy)\\b"
+  - "\\bguaranteed\\s+(?:results|accuracy|satisfaction)\\b"
+  - "\\bexpert\\s+in\\s+(?:all|everything)\\b"
