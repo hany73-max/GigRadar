@@ -50,7 +50,12 @@ def test_parse_mostaql_detail_fixture() -> None:
     assert gig.currency == "USD"
     assert gig.deadline_text is not None and "7" in gig.deadline_text
     assert gig.posted_at is not None
-    assert len(gig.tags_raw) > 0
+    assert gig.category_raw == "برمجة، تطوير المواقع والتطبيقات"
+    assert len(gig.tags_raw) == 6
+    assert "استضافة المواقع" in gig.tags_raw
+    assert "إنشاء موقع إلكتروني" in gig.tags_raw
+    assert "برمجة مواقع" in gig.tags_raw
+    assert gig.client_name == "User A"
     assert "معدل التوظيف" in gig.client_stats
     assert gig.raw_html_hash is not None
 

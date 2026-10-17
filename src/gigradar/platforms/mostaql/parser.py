@@ -178,11 +178,13 @@ def parse_mostaql_detail(
         category_raw = cat_el.get_text(strip=True)
 
     # 9. Tags / Skills
-    tags_raw = [
-        tag.get_text(strip=True)
-        for tag in soup.select("ul.skills li.skills__item a.tag bdi, ul.skills li.skills__item a.tag")
-        if tag.get_text(strip=True)
-    ]
+    tags_raw: list[str] = []
+    seen_tags: set[str] = set()
+    for tag in soup.select("ul.skills li.skills__item a.tag"):
+        tag_text = tag.get_text(strip=True)
+        if tag_text and tag_text not in seen_tags:
+            seen_tags.add(tag_text)
+            tags_raw.append(tag_text)
 
     # 10. Client info & stats
     client_name: str | None = stub.client_name if stub else None

@@ -8,7 +8,7 @@ This document is the single source of truth for the project's current state, dec
 
 - **Current Phase:** Phase 1: Platform discovery and parsers (COMPLETED)
 - **Next Phase:** Phase 1b: Freelancer.com via official API
-- **Overall System Health:** Green (All 73 unit tests passing, `ruff` clean, `mypy --strict` clean on 28 source files, 0 warnings, `gigradar doctor` operational, `gigradar scrape-once mostaql` and `gigradar scrape-once khamsat` functional)
+- **Overall System Health:** Green (All 91 unit tests passing, `ruff` clean, `mypy --strict` clean on 28 source files, 0 warnings, `gigradar doctor` operational, `gigradar scrape-once mostaql` and `gigradar scrape-once khamsat` functional)
 
 ---
 
@@ -116,9 +116,9 @@ Phase 0 foundation is complete and refined. Defaults are set conservatively (`LL
   - `tests/fixtures/html/khamsat_listing.html`: Real sanitized listing page (25 request rows).
 - **CLI Extension:**
   - `src/gigradar/cli.py`: Added `gigradar scrape-once <mostaql|khamsat>` command with `--limit` and `--fetch-details/--no-details` flags, Rich table output. UTF-8 console reconfiguration for Arabic text on Windows.
-- **Test Suite (55 new tests, 73 total):**
-  - `tests/test_normalization.py`: 30 parametrized tests for digit normalization, relative Arabic time, datetime parsing, budget ranges, bid counts, language detection.
-  - `tests/test_parsers.py`: 4 tests against real HTML fixtures (Mostaql listing, Mostaql detail, Khamsat listing, error handling).
+- **Test Suite (73 new tests, 91 total):**
+  - `tests/test_normalization.py`: 48 parametrized tests for digit normalization, relative Arabic time (seconds, minutes, hours, days, weeks, months, years, compound phrases, ValueError on unrecognized/empty text), machine-readable datetime fallback, budget ranges, bid counts, language detection.
+  - `tests/test_parsers.py`: 4 tests against real HTML fixtures (Mostaql listing, Mostaql detail with category and skill tags assertion, Khamsat listing, error handling).
   - `tests/test_http_client.py`: 5 tests for rate limiter, retry-after parsing, mock HTTP success, 503 retry recovery.
   - `tests/test_platform_clients.py`: 4 tests for protocol conformance, mock listing+detail flow (Mostaql/Khamsat), health check failure handling.
   - `tests/test_cli.py`: 2 new tests for `scrape-once` (unsupported platform, mocked successful scrape).
@@ -142,7 +142,7 @@ uv run gigradar scrape-once mostaql --limit 5 --no-details
 ```
 
 #### 3. Test results
-- **Pytest:** 73 passed in 3.64s (0 warnings).
+- **Pytest:** 91 passed in 16.33s (0 warnings).
 - **Ruff:** All checks passed (clean lint and imports).
 - **Mypy:** Success: no issues found in 28 source files (`--strict` mode).
 
@@ -150,19 +150,20 @@ uv run gigradar scrape-once mostaql --limit 5 --no-details
 - **No Playwright / No WAF bypass:** Khamsat detail pages return HTTP 202 with AWS WAF JS challenge. Per project safety rules and anti-bot policy, we do NOT use browser automation. Khamsat is parsed from listing pages only; detail-only fields (extended description, thread replies) stay `None`. This is documented in `docs/PLATFORM_NOTES.md` section 2.3.
 - **Pure-function parsers:** All HTML parsing is in pure functions (`parse_mostaql_listing`, `parse_mostaql_detail`, `parse_khamsat_listing`) that take raw HTML strings and return typed Pydantic models. Zero network calls inside parsers — fully unit-testable against fixtures.
 - **Dual timestamp strategy:** Both Mostaql (`<time datetime="...">`) and Khamsat (`<span title="DD/MM/YYYY HH:MM:SS GMT">`) provide machine-readable timestamps alongside Arabic relative text. The parser tries machine-readable first, falls back to relative Arabic parsing.
+- **Strict Relative Time Parsing:** `parse_relative_arabic_time` supports seconds (`ثانية`/`ثواني`), minutes, hours, days, weeks (`أسبوع`/`أسبوعين`/`أسابيع`), months, years, and compound phrases. Unrecognized text or empty strings raise `ValueError` (never falling back to "now"). Callers like `parse_datetime_or_relative` catch `ValueError` and safely return `None`.
 - **PoliteHttpClient design:** Rate limiter uses async lock for concurrency safety, jitter is configurable per-platform via `platforms.yaml`, retries use tenacity with exponential backoff, and `Retry-After` headers are honored for both integer-seconds and HTTP-date formats.
-- **Sanitized fixtures:** All HTML fixtures had personal names, emails, and profile photos replaced with placeholders before committing, while preserving the DOM structure needed for parser validation.
+- **Sanitized fixtures:** All HTML fixtures have personal names (buyer, client, responder, bidder names) replaced with generic placeholders (`User A`, etc.), while preserving non-personal metadata (category names, skill tags, project titles) and DOM structure intact. Tag deduplication in the detail parser ensures clean unique tags.
 
 #### 5. Known issues / risks
 - **Khamsat detail pages inaccessible:** By design (AWS WAF). Budget, extended description, and tags from Khamsat are `None`. This is acceptable for Phase 1; if detail data becomes needed, a logged-in session cookie approach could be explored in a future phase.
 - **Layout drift risk:** Both platforms could change their HTML structure at any time. The `health_check()` method on each client validates that the listing page still parses correctly, and the `gigradar doctor` can be extended to run these checks.
 
 #### 6. Questions for owner
-- None at this stage. Phase 1 acceptance criteria are met: both `scrape-once` commands work, parser tests pass against fixtures, and `docs/PLATFORM_NOTES.md` documents all findings.
+- None at this stage. Phase 1 acceptance criteria and refinements are met: both `scrape-once` commands work, parser tests pass against sanitized fixtures with category/skills assertions, and `docs/PLATFORM_NOTES.md` documents all findings.
 
 #### 7. Proposed next phase and inputs needed
 - **Phase 1b: Freelancer.com via official API** (per section 6.1b and section 9 of master prompt).
 - *Inputs needed:* Freelancer.com OAuth credentials (or decision to skip Phase 1b and proceed to Phase 2: Storage, dedupe, scheduling).
 
 #### 8. Handoff note
-Phase 1 is complete. Mostaql listing+detail and Khamsat listing-only parsers work against real HTML, backed by 73 tests (all green). No Playwright in the project. `PoliteHttpClient` handles rate limiting, jitter, retries, and `Retry-After`. The `PlatformClient` protocol is established and both `MostaqlClient` and `KhamsatClient` conform to it. `docs/PLATFORM_NOTES.md` has full technical profiles. Ready for **Phase 1b** (Freelancer.com API) or **Phase 2** (Storage & scheduling).
+Phase 1 is complete and refined. Mostaql listing+detail and Khamsat listing-only parsers work against real HTML, backed by 91 tests (all green). No Playwright in the project. `PoliteHttpClient` handles rate limiting, jitter, retries, and `Retry-After`. The `PlatformClient` protocol is established and both `MostaqlClient` and `KhamsatClient` conform to it. Fixtures are fully sanitized of personal data while preserving categories and skills. Ready for **Phase 1b** (Freelancer.com API) or **Phase 2** (Storage & scheduling).

@@ -28,63 +28,122 @@ def normalize_digits(text: str) -> str:
 
 
 def parse_relative_arabic_time(text: str, base_time: datetime | None = None) -> datetime:
-    """Parse relative Arabic time expressions (e.g., 'منذ 10 دقائق', 'منذ 8 ساعات و5 دقائق') into UTC datetime."""
-    now = base_time or datetime.now(UTC)
-    if not text:
-        return now
+    """Parse relative Arabic time expressions into UTC datetime.
 
+    Supports:
+        - Immediate: 'الآن', 'لحظات', 'أقل من دقيقة'
+        - Seconds: 'ثانية', 'ثانيتين', '30 ثانية', '15 ثواني'
+        - Minutes: 'دقيقة', 'دقيقتين', '5 دقائق', '15 دقيقة'
+        - Hours: 'ساعة', 'ساعتين', '8 ساعات', '20 ساعة'
+        - Days: 'يوم', 'يومين', '3 أيام', '15 يوما'
+        - Weeks: 'أسبوع', 'أسبوعين', '5 أسابيع'
+        - Months: 'شهر', 'شهرين', '3 أشهر' (~30 days)
+        - Years: 'سنة', 'سنتين', 'عام', 'عامين', '3 سنوات' (~365 days)
+        - Compound: 'منذ 8 ساعات و5 دقائق', 'منذ أسبوع ويومين'
+
+    Raises:
+        ValueError: If text is empty, contains unrecognized expressions, or cannot be matched
+            to any supported time unit. Never falls back to 'now'.
+    """
+    if not text or not text.strip():
+        raise ValueError("Cannot parse empty relative Arabic time string")
+
+    now = base_time or datetime.now(UTC)
     cleaned = normalize_digits(text.strip().lower())
 
-    # Fast check for immediate time
-    if any(k in cleaned for k in ["الآن", "لحظات", "ثوان", "أقل من دقيقة", "اقل من دقيقة"]):
-        return now
-
+    matched = False
     total_delta = timedelta()
 
-    # Days
-    days_match = re.search(r"(\d+)\s*(?:يوم|أيام|ايام)", cleaned)
-    if days_match:
-        total_delta += timedelta(days=int(days_match.group(1)))
-    elif "يومين" in cleaned:
-        total_delta += timedelta(days=2)
-    elif "يوم" in cleaned:
-        total_delta += timedelta(days=1)
+    # Fast check for immediate time
+    if any(k in cleaned for k in ["الآن", "الان", "لحظات", "أقل من دقيقة", "اقل من دقيقة"]):
+        matched = True
 
-    # Hours
-    hours_match = re.search(r"(\d+)\s*(?:ساعة|ساعات)", cleaned)
-    if hours_match:
-        total_delta += timedelta(hours=int(hours_match.group(1)))
-    elif "ساعتين" in cleaned:
-        total_delta += timedelta(hours=2)
-    elif "ساعة" in cleaned:
-        total_delta += timedelta(hours=1)
-
-    # Minutes
-    minutes_match = re.search(r"(\d+)\s*(?:دقيقة|دقائق)", cleaned)
-    if minutes_match:
-        total_delta += timedelta(minutes=int(minutes_match.group(1)))
-    elif "دقيقتين" in cleaned:
-        total_delta += timedelta(minutes=2)
-    elif "دقيقة" in cleaned:
-        total_delta += timedelta(minutes=1)
+    # Years (approx 365 days)
+    years_match = re.search(r"(\d+)\s*(?:سنة|سنوات|عام|أعوام|اعوام)", cleaned)
+    if years_match:
+        total_delta += timedelta(days=int(years_match.group(1)) * 365)
+        matched = True
+    elif "سنتين" in cleaned or "عامين" in cleaned:
+        total_delta += timedelta(days=730)
+        matched = True
+    elif re.search(r"(?:سنة|عام)", cleaned):
+        total_delta += timedelta(days=365)
+        matched = True
 
     # Months (approx 30 days)
     months_match = re.search(r"(\d+)\s*(?:شهر|أشهر|اشهر)", cleaned)
     if months_match:
         total_delta += timedelta(days=int(months_match.group(1)) * 30)
+        matched = True
     elif "شهرين" in cleaned:
         total_delta += timedelta(days=60)
+        matched = True
     elif "شهر" in cleaned:
         total_delta += timedelta(days=30)
+        matched = True
 
-    # Years (approx 365 days)
-    years_match = re.search(r"(\d+)\s*(?:سنة|سنوات|عام|أعوام)", cleaned)
-    if years_match:
-        total_delta += timedelta(days=int(years_match.group(1)) * 365)
-    elif "سنتين" in cleaned or "عامين" in cleaned:
-        total_delta += timedelta(days=730)
-    elif "سنة" in cleaned or "عام" in cleaned:
-        total_delta += timedelta(days=365)
+    # Weeks (7 days per week)
+    weeks_match = re.search(r"(\d+)\s*(?:أسبوع|اسبوع|أسابيع|اسابيع)", cleaned)
+    if weeks_match:
+        total_delta += timedelta(days=int(weeks_match.group(1)) * 7)
+        matched = True
+    elif "أسبوعين" in cleaned or "اسبوعين" in cleaned:
+        total_delta += timedelta(days=14)
+        matched = True
+    elif "أسبوع" in cleaned or "اسبوع" in cleaned:
+        total_delta += timedelta(days=7)
+        matched = True
+
+    # Days
+    days_match = re.search(r"(\d+)\s*(?:يوم|أيام|ايام)", cleaned)
+    if days_match:
+        total_delta += timedelta(days=int(days_match.group(1)))
+        matched = True
+    elif "يومين" in cleaned:
+        total_delta += timedelta(days=2)
+        matched = True
+    elif "يوم" in cleaned:
+        total_delta += timedelta(days=1)
+        matched = True
+
+    # Hours
+    hours_match = re.search(r"(\d+)\s*(?:ساعة|ساعات)", cleaned)
+    if hours_match:
+        total_delta += timedelta(hours=int(hours_match.group(1)))
+        matched = True
+    elif "ساعتين" in cleaned:
+        total_delta += timedelta(hours=2)
+        matched = True
+    elif "ساعة" in cleaned:
+        total_delta += timedelta(hours=1)
+        matched = True
+
+    # Minutes
+    minutes_match = re.search(r"(\d+)\s*(?:دقيقة|دقائق)", cleaned)
+    if minutes_match:
+        total_delta += timedelta(minutes=int(minutes_match.group(1)))
+        matched = True
+    elif "دقيقتين" in cleaned:
+        total_delta += timedelta(minutes=2)
+        matched = True
+    elif "دقيقة" in cleaned:
+        total_delta += timedelta(minutes=1)
+        matched = True
+
+    # Seconds
+    seconds_match = re.search(r"(\d+)\s*(?:ثانية|ثواني|ثوان)", cleaned)
+    if seconds_match:
+        total_delta += timedelta(seconds=int(seconds_match.group(1)))
+        matched = True
+    elif "ثانيتين" in cleaned:
+        total_delta += timedelta(seconds=2)
+        matched = True
+    elif "ثانية" in cleaned:
+        total_delta += timedelta(seconds=1)
+        matched = True
+
+    if not matched:
+        raise ValueError(f"Unrecognized relative Arabic time expression: {text!r}")
 
     return now - total_delta
 
@@ -94,7 +153,10 @@ def parse_datetime_or_relative(
     datetime_attr: str | None = None,
     base_time: datetime | None = None,
 ) -> datetime | None:
-    """Parse machine-readable timestamp (HTML attribute) or fall back to Arabic relative time."""
+    """Parse machine-readable timestamp (HTML attribute) or fall back to Arabic relative time.
+
+    Returns None if neither machine-readable attribute nor relative text can be parsed.
+    """
     if datetime_attr:
         clean_attr = datetime_attr.strip()
         # Format 1: Mostaql standard 'YYYY-MM-DD HH:MM:SS'
@@ -125,7 +187,10 @@ def parse_datetime_or_relative(
                     pass
 
     if text:
-        return parse_relative_arabic_time(text, base_time=base_time)
+        try:
+            return parse_relative_arabic_time(text, base_time=base_time)
+        except ValueError:
+            return None
 
     return None
 

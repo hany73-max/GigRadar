@@ -30,28 +30,53 @@ def test_normalize_digits(input_str: str, expected: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("text", "expected_minutes_ago"),
+    ("text", "expected_seconds_ago"),
     [
-        ("منذ دقيقة", 1),
-        ("منذ دقيقتين", 2),
-        ("منذ 10 دقائق", 10),
-        ("منذ ١٥ دقيقة", 15),
-        ("منذ ساعة", 60),
-        ("منذ ساعتين", 120),
-        ("منذ 3 ساعات", 180),
-        ("منذ 8 ساعات و5 دقائق", 485),
-        ("منذ يوم", 1440),
-        ("منذ يومين", 2880),
         ("الآن", 0),
         ("منذ لحظات", 0),
+        ("منذ ثانية", 1),
+        ("منذ ثانيتين", 2),
+        ("منذ 30 ثانية", 30),
+        ("منذ 15 ثواني", 15),
+        ("منذ دقيقة", 60),
+        ("منذ دقيقتين", 120),
+        ("منذ 10 دقائق", 600),
+        ("منذ ١٥ دقيقة", 900),
+        ("منذ ساعة", 3600),
+        ("منذ ساعتين", 7200),
+        ("منذ 3 ساعات", 10800),
+        ("منذ 8 ساعات و5 دقائق", 29100),
+        ("منذ يوم", 86400),
+        ("منذ يومين", 172800),
+        ("منذ 3 أيام", 259200),
+        ("منذ أسبوع", 7 * 86400),
+        ("منذ أسبوعين", 14 * 86400),
+        ("منذ 5 أسابيع", 35 * 86400),
+        ("منذ شهر", 30 * 86400),
+        ("منذ شهرين", 60 * 86400),
+        ("منذ سنة", 365 * 86400),
     ],
 )
-def test_parse_relative_arabic_time(text: str, expected_minutes_ago: int) -> None:
+def test_parse_relative_arabic_time(text: str, expected_seconds_ago: int) -> None:
     base = datetime(2026, 10, 17, 12, 0, 0, tzinfo=UTC)
     result = parse_relative_arabic_time(text, base_time=base)
-    expected_seconds = expected_minutes_ago * 60
     actual_diff = (base - result).total_seconds()
-    assert abs(actual_diff - expected_seconds) < 2
+    assert abs(actual_diff - expected_seconds_ago) < 2
+
+
+@pytest.mark.parametrize(
+    "invalid_text",
+    [
+        "garbage string",
+        "غير محدد",
+        "foo 123 bar",
+        "",
+        "   ",
+    ],
+)
+def test_parse_relative_arabic_time_raises_on_unrecognized(invalid_text: str) -> None:
+    with pytest.raises(ValueError):
+        parse_relative_arabic_time(invalid_text)
 
 
 @pytest.mark.parametrize(
@@ -60,6 +85,7 @@ def test_parse_relative_arabic_time(text: str, expected_minutes_ago: int) -> Non
         ("", "2026-10-17 17:14:28", "2026-10-17T17:14:28+00:00"),
         ("", "17/10/2026 17:03:28 GMT", "2026-10-17T17:03:28+00:00"),
         ("منذ 10 دقائق", None, "2026-10-17T11:50:00+00:00"),
+        ("منذ 5 أسابيع", None, "2026-09-12T12:00:00+00:00"),
     ],
 )
 def test_parse_datetime_or_relative(text: str, attr: str | None, expected_iso: str) -> None:
@@ -67,6 +93,11 @@ def test_parse_datetime_or_relative(text: str, attr: str | None, expected_iso: s
     result = parse_datetime_or_relative(text, datetime_attr=attr, base_time=base)
     assert result is not None
     assert result.isoformat() == expected_iso
+
+
+def test_parse_datetime_or_relative_unrecognized_returns_none() -> None:
+    assert parse_datetime_or_relative("garbage string", datetime_attr=None) is None
+
 
 
 @pytest.mark.parametrize(
