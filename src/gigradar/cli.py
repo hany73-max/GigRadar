@@ -268,12 +268,13 @@ def scrape_once(
 
         posted_str = gig.posted_at.strftime("%Y-%m-%d %H:%M") if gig.posted_at else "-"
         client_str = gig.client_name or "-"
+        bids_str = str(gig.bids_count) if gig.bids_count is not None else "-"
 
         table.add_row(
             gig.external_id,
             gig.title[:35],
             budget_str,
-            str(gig.bids_count),
+            bids_str,
             posted_str,
             client_str[:13],
             gig.language,

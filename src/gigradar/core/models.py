@@ -14,7 +14,7 @@ class GigStub(BaseModel):
     url: str
     title: str
     posted_at: datetime | None = None
-    bids_count: int = 0
+    bids_count: int | None = None
     brief_description: str | None = None
     client_name: str | None = None
 
@@ -31,7 +31,7 @@ class Gig(BaseModel):
     budget_max: float | None = None
     currency: str = "USD"
     budget_usd_est: float | None = None
-    bids_count: int = 0
+    bids_count: int | None = None
     posted_at: datetime | None = None
     deadline_text: str | None = None
     client_name: str | None = None

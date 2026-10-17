@@ -72,12 +72,14 @@ def test_parse_khamsat_listing_fixture() -> None:
     assert "روابط باك لينك" in first.title
     assert first.posted_at is not None
     assert first.client_name is not None
+    assert first.bids_count is None
 
     gig = parse_khamsat_gig_from_stub(first, raw_html=html)
     assert gig.platform_id == "khamsat"
     assert gig.external_id == "799121"
     assert gig.budget_min is None
     assert gig.budget_max is None
+    assert gig.bids_count is None
     assert gig.category_raw == "طلبات الخدمات غير الموجودة"
 
 

@@ -80,7 +80,7 @@ def parse_khamsat_listing(html: str, base_url: str = "https://khamsat.com") -> l
                 url=full_url,
                 title=title,
                 posted_at=posted_at,
-                bids_count=0,
+                bids_count=None,
                 brief_description=title,
                 client_name=client_name,
             )

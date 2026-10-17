@@ -22,6 +22,39 @@ async def test_rate_limiter_spacing() -> None:
     assert (t1 - t0) >= 0.1
 
 
+@pytest.mark.asyncio
+async def test_rate_limiter_skips_jitter_on_first_and_idle_requests() -> None:
+    import asyncio
+
+    limiter = RateLimiter(
+        min_interval_seconds=0.05,
+        jitter_min_seconds=0.15,
+        jitter_max_seconds=0.25,
+        idle_threshold_seconds=0.1,
+    )
+
+    # 1. First request ever: immediate (no jitter delay)
+    t0 = time.monotonic()
+    await limiter.wait()
+    t1 = time.monotonic()
+    assert (t1 - t0) < 0.05, "First request must not suffer jitter delay"
+
+    # 2. Consecutive request: must wait for min_interval + jitter
+    t2 = time.monotonic()
+    await limiter.wait()
+    t3 = time.monotonic()
+    assert (t3 - t2) >= 0.15, "Consecutive request must wait for pacing + jitter"
+
+    # 3. Simulate idle period by waiting past idle_threshold
+    await asyncio.sleep(0.12)
+
+    # 4. Request after idle period: immediate (no jitter delay)
+    t4 = time.monotonic()
+    await limiter.wait()
+    t5 = time.monotonic()
+    assert (t5 - t4) < 0.05, "Request after idle period must not suffer jitter delay"
+
+
 def test_parse_retry_after_seconds() -> None:
     resp = httpx.Response(429, headers={"Retry-After": "15"})
     assert _parse_retry_after(resp) == 15.0

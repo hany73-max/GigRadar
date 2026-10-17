@@ -19,25 +19,48 @@ logger = structlog.get_logger(__name__)
 
 
 class RateLimiter:
-    """Async per-platform rate limiter with jitter support."""
+    """Async per-platform rate limiter with jitter support.
+
+    Does not delay the first request or requests made after an idle period.
+    Consecutive requests within the active interval wait for min_interval plus jitter.
+    """
 
     def __init__(
         self,
         min_interval_seconds: float = 2.0,
         jitter_min_seconds: float = 0.5,
         jitter_max_seconds: float = 2.0,
+        idle_threshold_seconds: float | None = None,
     ) -> None:
         self.min_interval = min_interval_seconds
         self.jitter_min = jitter_min_seconds
         self.jitter_max = jitter_max_seconds
+        self.idle_threshold = (
+            idle_threshold_seconds
+            if idle_threshold_seconds is not None
+            else (min_interval_seconds + jitter_max_seconds)
+        )
         self._last_request_time: float = 0.0
         self._lock = asyncio.Lock()
 
     async def wait(self) -> None:
-        """Wait until it is safe to make the next request, including jitter."""
+        """Wait until it is safe to make the next request, including jitter.
+
+        The first request or any request made after an idle period (elapsed >= idle_threshold)
+        experiences zero jitter delay. Consecutive requests within the active interval wait for
+        the remaining minimum interval plus jitter.
+        """
         async with self._lock:
             now = asyncio.get_event_loop().time()
+            if self._last_request_time == 0.0:
+                self._last_request_time = now
+                return
+
             elapsed = now - self._last_request_time
+            if elapsed >= self.idle_threshold:
+                self._last_request_time = now
+                return
+
             jitter = random.uniform(self.jitter_min, self.jitter_max)
             target_wait = max(0.0, self.min_interval - elapsed) + jitter
 

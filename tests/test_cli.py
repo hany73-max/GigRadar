@@ -75,3 +75,34 @@ def test_cli_scrape_once_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "123456" in result.stdout
     assert "Mostaql" in result.stdout
     assert "$100 - $250" in result.stdout
+
+
+def test_cli_scrape_once_bids_count_none_displays_dash(monkeypatch: pytest.MonkeyPatch) -> None:
+    import gigradar.cli as cli_module
+    from gigradar.core.models import Gig
+
+    sample_gig = Gig(
+        platform_id="khamsat",
+        external_id="799121",
+        url="https://khamsat.com/community/requests/799121",
+        title="طلب خدمة غير موجودة",
+        description="تفاصيل الطلب",
+        budget_min=None,
+        budget_max=None,
+        currency="USD",
+        bids_count=None,
+        posted_at=None,
+        client_name="Test Buyer",
+        language="ar",
+    )
+
+    async def mock_run_scrape_once(platform_name: str, limit: int, fetch_details: bool) -> list[Gig]:
+        return [sample_gig]
+
+    monkeypatch.setattr(cli_module, "_run_scrape_once", mock_run_scrape_once)
+
+    result = runner.invoke(app, ["scrape-once", "khamsat", "--limit", "1"])
+    assert result.exit_code == 0
+    assert "799121" in result.stdout
+    assert "Khamsat" in result.stdout
+    assert "-" in result.stdout

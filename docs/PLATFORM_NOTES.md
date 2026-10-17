@@ -97,6 +97,10 @@ This document contains empirical findings and technical discovery data for suppo
   - Contains exact GMT/UTC datetime in `title` attribute, plus relative Arabic string.
 - **Last Reply / Activity:**
   - `td.d-lg-block div.o-media` contains the last responder's username and interaction timestamp.
+- **Offers Count, Budget & Description (Listing Limitations):**
+  - Khamsat listing rows expose only the request title, buyer username, posted timestamp, and last responder activity.
+  - Listings do **not** display an offers/bids count, budget range, or extended description.
+  - Consequently, `bids_count`, `budget_min`, `budget_max`, and `budget_usd_est` are parsed as `None` (unknown), and `description` is initialized from the request title/stub. In CLI listings, unknown bids count renders cleanly as `-`.
 
 ---
 

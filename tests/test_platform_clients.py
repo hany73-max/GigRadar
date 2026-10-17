@@ -71,10 +71,12 @@ async def test_khamsat_client_list_and_detail() -> None:
     assert len(stubs) == 25
 
     stub = stubs[0]
+    assert stub.bids_count is None
     gig = await client.fetch_gig_detail(stub)
     assert gig.platform_id == "khamsat"
     assert gig.external_id == stub.external_id
     assert gig.title == stub.title
+    assert gig.bids_count is None
 
     health = await client.health_check()
     assert health.is_healthy is True
