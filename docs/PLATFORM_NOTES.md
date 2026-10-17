@@ -129,3 +129,89 @@ Platforms express relative time in Arabic phrasing:
   - `ar`: Arabic character ratio > 70%
   - `en`: Latin character ratio > 70%
   - `mixed`: Neither exceeds 70% or contains substantial technical jargon in both.
+
+---
+
+## 4. Freelancer.com (Official REST API)
+
+### 4.1 Technical Profile
+- **Base URL:** `https://www.freelancer.com`
+- **Official API Root:** `https://www.freelancer.com/api/projects/0.1/`
+- **Developer Documentation Portal:** `https://developers.freelancer.com/`
+- **Active Projects Endpoint Docs:** `https://developers.freelancer.com/docs/projects/projects#projects-get-3`
+- **Jobs / Skills Endpoint Docs:** `https://developers.freelancer.com/docs/projects/jobs`
+- **Currencies Endpoint Docs:** `https://developers.freelancer.com/docs/projects/currencies`
+- **Rate Limiting Docs:** `https://developers.freelancer.com/docs/api-overview/rate-limiting`
+- **Terms & Prohibited Integrations:** `https://developers.freelancer.com/docs/api-overview/types-of-integrations#header-prohibited-integrations`
+- **Rendering Model:** **REST JSON API**. No HTML scraping, zero headless browser/Playwright required.
+- **Authentication Model:**
+  - Public search for active projects (`/projects/0.1/projects/active/`) works **unauthenticated** (HTTP 200).
+  - Unauthenticated responses provide full project metadata (title, full description, budget ranges, currency, real-time exchange rates, submit timestamps, bid counts, skill tags, and upgrade flags).
+  - Client / buyer personal data (`owner_id`, `owner_info`, detailed location, buyer KYC, client engagement, bids list) are hidden by Freelancer (`None` / empty) on unauthenticated requests.
+  - Authenticated requests (required only for bidding or private client data) require OAuth 2.0 access token passed via `Freelancer-OAuth-v1: <token>` header.
+
+### 4.2 Verified Endpoints & Query Parameters
+- **Active Projects Search:** `GET https://www.freelancer.com/api/projects/0.1/projects/active/`
+  - `query`: String keyword search filter.
+  - `jobs[]`: Array of integer skill/job IDs (e.g. `?jobs[]=13&jobs[]=292`).
+  - `project_types[]`: `fixed`, `hourly`.
+  - `sort_field`: `time_updated` or `submitdate`.
+  - `reverse_sort`: `true` (returns newest projects first).
+  - `limit`: Number of projects per request (default 10, max 100).
+  - `full_description`: `true` (ensures complete description text is returned rather than truncated preview).
+  - `job_details`: `true` (expands full skill object with `name` and `category`).
+- **Skill / Job Directory:** `GET https://www.freelancer.com/api/projects/0.1/jobs/`
+  - Query parameters: `job_names[]` (e.g. `?job_names[]=Python`).
+  - Returns array of job objects with `id`, `name`, `category`, and `seo_url`.
+- **Currencies Directory:** `GET https://www.freelancer.com/api/projects/0.1/currencies/`
+  - Returns supported currencies with currency code, sign, and `exchange_rate` to USD.
+
+### 4.3 Verified Freelancer Skill / Job IDs
+Discovered and verified empirically via the `/projects/0.1/jobs/` endpoint:
+- **Python:** `13`
+- **Machine Learning (ML):** `292`
+- **Deep Learning:** `1601`
+- **Data Science:** `761`
+- **Natural Language Processing:** `2833`
+- **Computer Vision:** `1558`
+- **Web Scraping:** `95`
+- **SQL:** `68`
+- **Data Processing:** `36`
+- **Data Mining:** `334`
+
+### 4.4 Verified Response Schema & Field Mapping to `Gig`
+From real API responses returned by `/projects/0.1/projects/active/`:
+- `id` (int) -> `Gig.external_id` (str)
+- `seo_url` (str) -> `Gig.url`: `https://www.freelancer.com/projects/{seo_url}` (fallback: `https://www.freelancer.com/projects/{id}`)
+- `title` (str) -> `Gig.title`
+- `description` (str) -> `Gig.description` (fallback: `preview_description`)
+- `type` (str) -> `"fixed"` or `"hourly"`
+- `budget.minimum` (float) -> `Gig.budget_min`
+- `budget.maximum` (float) -> `Gig.budget_max`
+- `currency.code` (str) -> `Gig.currency` (e.g. `"USD"`, `"GBP"`, `"EUR"`, `"INR"`)
+- `currency.exchange_rate` (float) -> Live exchange rate to USD provided natively by the API.
+  - USD rate is `1.0`.
+  - Fixed projects: `budget_usd_est = round(budget_min * exchange_rate, 2)` (or `budget_max * exchange_rate`).
+  - Hourly projects: Stored as hourly range in `budget_min` / `budget_max`, with `budget_usd_est` computed from hourly rate.
+- `bid_stats.bid_count` (int) -> `Gig.bids_count`
+- `submitdate` (int unix timestamp) -> `Gig.posted_at`: `datetime.fromtimestamp(submitdate, tz=timezone.utc)`
+- `jobs` (list[dict]) -> `Gig.tags_raw`: `[job["name"] for job in jobs if "name" in job]`
+- `jobs[0].category.name` -> `Gig.category_raw`
+- `language` (str) -> `Gig.language`: `"en"` for English, mapped via language detection for others.
+- `client_stats`: Stores `{}` in unauthenticated mode since Freelancer hides owner details on unauthenticated endpoints.
+
+### 4.5 Server-Side & Local Filtering Requirements
+Per Master Prompt rules, the client applies strict filtering to discard irrelevant or risky listings:
+- **Exclusions:**
+  - `upgrades.NDA is True`: Exclude NDA projects.
+  - `local is True` or `is_local is True`: Exclude on-site/local jobs.
+  - `upgrades.recruiter is True` or `assisted is True`: Exclude recruiter-managed/fee listings.
+  - `type == "contest"`: Exclude contests.
+  - `status != "active"` or `deleted is True` or `nonpublic is True`: Exclude non-active.
+- **Deduplication:**
+  - Queries across multiple skill IDs or keywords are merged and deduplicated by project `id`.
+
+### 4.6 Rate Limits & Terms of Service Compliance
+- **Rate Limits:** Approximately 100 requests per minute per IP. `PoliteHttpClient` enforces jitter, rate limiting, and backoff on HTTP 429 (`Retry-After`).
+- **Terms of Service:** Read-only inspection of active listings through the official API does not violate platform rules. Automated bidding without human oversight is prohibited (bidding is out of scope for Phase 1b and strictly human-gated in Phase 9).
+

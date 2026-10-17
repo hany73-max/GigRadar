@@ -175,6 +175,7 @@ def doctor(
 
 
 async def _run_scrape_once(platform_name: str, limit: int, fetch_details: bool) -> list[Any]:
+    from gigradar.platforms.freelancer.client import FreelancerClient
     from gigradar.platforms.khamsat.client import KhamsatClient
     from gigradar.platforms.mostaql.client import MostaqlClient
 
@@ -207,15 +208,25 @@ async def _run_scrape_once(platform_name: str, limit: int, fetch_details: bool) 
                 gigs.append(gig)
             return gigs
 
+    elif platform_lower == "freelancer":
+        async with FreelancerClient() as client:
+            client.config.max_pages_per_run = 1
+            stubs = await client.list_new_gigs()
+            gigs = []
+            for stub in stubs[:limit]:
+                gig = await client.fetch_gig_detail(stub)
+                gigs.append(gig)
+            return gigs
+
     else:
-        raise ValueError(f"Unknown platform '{platform_name}'. Supported platforms: mostaql, khamsat")
+        raise ValueError(f"Unknown platform '{platform_name}'. Supported platforms: mostaql, khamsat, freelancer")
 
 
 @app.command(name="scrape-once")
 def scrape_once(
     platform: str = typer.Argument(
         ...,
-        help="Target platform to scrape: 'mostaql' or 'khamsat'.",
+        help="Target platform to scrape: 'mostaql', 'khamsat', or 'freelancer'.",
     ),
     limit: int = typer.Option(
         5,
@@ -233,8 +244,10 @@ def scrape_once(
     import asyncio
 
     platform_lower = platform.lower().strip()
-    if platform_lower not in {"mostaql", "khamsat"}:
-        console.print(f"[bold red]Error:[/bold red] Unsupported platform '{platform}'. Choose 'mostaql' or 'khamsat'.")
+    if platform_lower not in {"mostaql", "khamsat", "freelancer"}:
+        console.print(
+            f"[bold red]Error:[/bold red] Unsupported platform '{platform}'. Choose 'mostaql', 'khamsat', or 'freelancer'."
+        )
         raise typer.Exit(code=1)
 
     console.print(f"\n[bold cyan]Scraping once from [green]{platform_lower}[/green] (limit: {limit})...[/bold cyan]\n")
@@ -259,12 +272,26 @@ def scrape_once(
     table.add_column("Lang")
 
     for gig in gigs:
-        if gig.budget_min and gig.budget_max:
-            budget_str = f"${gig.budget_min:g} - ${gig.budget_max:g}"
-        elif gig.budget_min:
-            budget_str = f"${gig.budget_min:g}"
+        unit = "/hr" if getattr(gig, "project_type", "fixed") == "hourly" else ""
+        if gig.currency == "USD":
+            if gig.budget_min and gig.budget_max:
+                budget_str = f"${gig.budget_min:g} - ${gig.budget_max:g}{unit}"
+            elif gig.budget_min:
+                budget_str = f"${gig.budget_min:g}{unit}"
+            else:
+                budget_str = "-"
         else:
-            budget_str = "-"
+            if gig.budget_min and gig.budget_max:
+                base_b = f"{gig.currency} {gig.budget_min:g} - {gig.budget_max:g}{unit}"
+            elif gig.budget_min:
+                base_b = f"{gig.currency} {gig.budget_min:g}{unit}"
+            else:
+                base_b = "-"
+
+            if gig.budget_usd_est is not None:
+                budget_str = f"{base_b} (~${gig.budget_usd_est:g}{unit})"
+            else:
+                budget_str = base_b
 
         posted_str = gig.posted_at.strftime("%Y-%m-%d %H:%M") if gig.posted_at else "-"
         client_str = gig.client_name or "-"

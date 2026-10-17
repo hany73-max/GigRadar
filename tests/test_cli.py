@@ -106,3 +106,39 @@ def test_cli_scrape_once_bids_count_none_displays_dash(monkeypatch: pytest.Monke
     assert "799121" in result.stdout
     assert "Khamsat" in result.stdout
     assert "-" in result.stdout
+
+
+def test_cli_scrape_once_freelancer(monkeypatch: pytest.MonkeyPatch) -> None:
+    import gigradar.cli as cli_module
+    from gigradar.core.models import Gig
+
+    freelancer_gig = Gig(
+        platform_id="freelancer",
+        external_id="40773380",
+        url="https://www.freelancer.com/projects/40773380",
+        title="Extract App Photos",
+        description="Extract photos from app",
+        budget_min=10.0,
+        budget_max=20.0,
+        currency="GBP",
+        budget_usd_est=13.33,
+        bids_count=31,
+        posted_at=None,
+        client_name=None,
+        language="en",
+        project_type="fixed",
+    )
+
+    async def mock_run_scrape_once(platform_name: str, limit: int, fetch_details: bool) -> list[Gig]:
+        return [freelancer_gig]
+
+    monkeypatch.setattr(cli_module, "_run_scrape_once", mock_run_scrape_once)
+
+    result = runner.invoke(app, ["scrape-once", "freelancer", "--limit", "1"])
+    assert result.exit_code == 0
+    assert "40773380" in result.stdout
+    assert "Freelancer" in result.stdout
+    assert "GBP 10 - 20" in result.stdout
+    assert "$13.33" in result.stdout
+    assert "31" in result.stdout
+

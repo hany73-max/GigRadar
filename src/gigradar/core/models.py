@@ -39,6 +39,7 @@ class Gig(BaseModel):
     category_raw: str | None = None
     tags_raw: list[str] = Field(default_factory=list)
     language: Literal["ar", "en", "mixed"] = "ar"
+    project_type: Literal["fixed", "hourly"] = "fixed"
     raw_html_hash: str | None = None
 
 

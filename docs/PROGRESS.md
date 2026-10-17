@@ -6,14 +6,16 @@ This document is the single source of truth for the project's current state, dec
 
 ## Current Status Overview
 
-- **Current Phase:** Phase 1: Platform discovery and parsers (COMPLETED)
-- **Next Phase:** Phase 1b: Freelancer.com via official API
-- **Overall System Health:** Green (All 93 unit tests passing, `ruff` clean, `mypy --strict` clean on 28 source files, 0 warnings, `gigradar doctor` operational, `gigradar scrape-once mostaql` and `gigradar scrape-once khamsat` functional)
+- **Current Phase:** Phase 1b: Freelancer.com via official API (COMPLETED)
+- **Next Phase:** Phase 2: Storage, dedupe, scheduling
+- **Overall System Health:** Green (All 101 unit tests passing, `ruff` clean, `mypy --strict` clean on 32 source files, 0 warnings, `gigradar doctor` operational, `gigradar scrape-once mostaql`, `khamsat`, and `freelancer` functional)
 
 ---
 
 ## Carry-Forward Notes
 
+- **Phase 2 (Khamsat New-Gig Detection):** Khamsat listings are ordered by last activity, not posting time, so new-gig detection must use `external_id` plus a `posted_at` age check, never an early exit on a known ID.
+- **Phases 3 & 5 (Khamsat Detail Level):** Add a `detail_level` field (`full | title_only`) to `Gig`, set it to `title_only` for Khamsat, and make the rules filter and the scorer prompt aware that the description is missing.
 - **Phase 6 (Pitch Validation):** Replace the vocabulary regex ban with claim-based validation (comparing pitch factual statements against `claims_allowlist.yaml` and retrieved portfolio items via LLM judge, rather than naive regex keyword matching).
 
 ---
@@ -168,3 +170,70 @@ uv run gigradar scrape-once mostaql --limit 5 --no-details
 
 #### 8. Handoff note
 Phase 1 is complete and refined. Mostaql listing+detail and Khamsat listing-only parsers work against real HTML, backed by 93 tests (all green). No Playwright in the project. `PoliteHttpClient` handles rate limiting, jitter, retries, and `Retry-After`, with zero delay on first/idle requests. The `PlatformClient` protocol is established and both `MostaqlClient` and `KhamsatClient` conform to it. Fixtures are fully sanitized of personal data while preserving categories and skills. Ready for **Phase 1b** (Freelancer.com API) or **Phase 2** (Storage & scheduling).
+
+### Phase 1b: Freelancer.com via Official API (Completed)
+
+#### 1. What was built
+- **Official API Discovery & Documentation:**
+  - `docs/PLATFORM_NOTES.md` (Section 4): Documented Freelancer official REST API (`https://www.freelancer.com/api/projects/0.1/`), active projects search endpoint (`/projects/0.1/projects/active/`), skills directory (`/projects/0.1/jobs/`), currencies directory (`/projects/0.1/currencies/`), rate limits (~100 req/min), auth model (unauthenticated active search verified), and terms of service. Cited official developer URLs (`https://developers.freelancer.com/`).
+  - Discovered and cataloged verified skill IDs: Python (13), Machine Learning (292), Deep Learning (1601), Data Science (761), NLP (2833), Computer Vision (1558), Web Scraping (95), SQL (68), Data Processing (36), Data Mining (334).
+- **Domain Model Extension:**
+  - `src/gigradar/core/models.py`: Added `project_type: Literal["fixed", "hourly"] = "fixed"` to `Gig` domain model for clean handling of hourly project ranges without mixing with fixed prices.
+- **Pure-Function Parser:**
+  - `src/gigradar/platforms/freelancer/parser.py`: Pure functions `parse_freelancer_project()` (`json -> Gig`), `parse_freelancer_stub()` (`json -> GigStub`), `parse_freelancer_active_response()`, and `is_excluded_project()` checking safety/filtering rules (contests, NDA, local jobs, recruiter fee listings).
+  - Native USD normalization: Computes `budget_usd_est` using live exchange rates directly exposed in each project's `currency.exchange_rate` object. Hourly projects stored as hourly ranges with unit-safe rate estimation.
+- **Platform Client Implementation:**
+  - `src/gigradar/platforms/freelancer/client.py`: `FreelancerClient` implementing `PlatformClient` protocol via `PoliteHttpClient` using only `httpx` (no browser automation). Server-side filtering by skill IDs, sorting newest first (`sort_field=time_updated`, `reverse_sort=true`), deduplication across queries by project ID, in-memory detail cache avoiding duplicate network requests, and health check validation.
+  - `src/gigradar/platforms/freelancer/__init__.py` and `src/gigradar/platforms/__init__.py`: Exporting `FreelancerClient`.
+- **Platform Configuration:**
+  - `config/platforms.yaml`: Verified platform-specific thresholds: `max_existing_bids: 40`, `min_budget_usd: 30.0`, `max_gig_age_minutes: 360` (6h), and `poll_interval_seconds: 120`.
+- **Sanitized JSON Fixtures:**
+  - `tests/fixtures/json/freelancer_projects.json`: Sanitized real multi-project API envelope (8 projects) with client names, usernames, and emails stripped while preserving non-personal project titles, budgets, currencies, bid counts, timestamps, and safety upgrade flags.
+  - `tests/fixtures/json/freelancer_single_project.json`: Sanitized single project detail fixture.
+- **CLI Command Extension:**
+  - `src/gigradar/cli.py`: Wired `gigradar scrape-once freelancer --limit N` rendering parsed projects with original budget, estimated USD amounts, UTC timestamps, bid counts, and language.
+- **Test Suite (8 new tests, 101 total):**
+  - `tests/test_freelancer_parser.py`: 5 tests validating single project parsing, stub parsing, active envelope parsing, hourly project handling, exclusion rules (NDA, local, recruiter, contests, closed), and error cases.
+  - `tests/test_platform_clients.py`: Added 2 tests for protocol conformance, mock listing/detail flow, and health check failure handling.
+  - `tests/test_cli.py`: Added test for `scrape-once freelancer`.
+
+#### 2. How to run / verify it
+```bash
+# Full verification:
+uv run ruff check .
+uv run mypy src tests
+uv run pytest -v
+
+# Run the complete verification script:
+powershell -ExecutionPolicy Bypass -File scripts/check.ps1
+
+# Live scraping against Freelancer official API (unauthenticated):
+uv run gigradar scrape-once freelancer --limit 5
+```
+
+#### 3. Test results
+- **Pytest:** 101 passed in 6.03s (0 warnings).
+- **Ruff:** All checks passed.
+- **Mypy:** Success: no issues found in 32 source files (`--strict` mode).
+
+#### 4. Decisions made and why
+- **Unauthenticated Active Project Search:** Discovery confirmed that `GET /projects/0.1/projects/active/` returns HTTP 200 without OAuth tokens. However, client details (`owner_id`, `owner_info`, buyer KYC, location) are hidden (`None`) by Freelancer unless authenticated. This satisfies Phase 1b read-only requirements cleanly without needing an OAuth app.
+- **Native Exchange Rate Utilization:** The Freelancer API provides live currency `exchange_rate` directly inside each project's `currency` dictionary (`1.0` for USD, `1.3328` for GBP, `0.010531` for INR, etc.). `budget_usd_est` is computed directly as `round(budget_min * exchange_rate, 2)`, avoiding external FX lookups.
+- **Discrete `project_type` Model Field:** Added `project_type: Literal["fixed", "hourly"] = "fixed"` to `Gig` so hourly project ranges are strictly preserved without corrupting fixed-price calculations.
+- **Server-Side + Local Exclusions:** The parser excludes listings flagged as `upgrades.NDA=True`, `local=True`, `upgrades.recruiter=True`, `assisted=True`, or `type="contest"`.
+- **Zero-Extra-Network Detail Fetch:** Active project listing queries with `full_description=true` and `job_details=true` already return complete project records; `FreelancerClient` caches these parsed `Gig`s so `fetch_gig_detail(stub)` resolves instantly with zero extra HTTP requests.
+
+#### 5. Known issues / risks
+- **Client Metadata Hidden:** As discovered, client stats (ratings, hire rate, payment verification) are unavailable unauthenticated. When OAuth is added in Phase 9 for bidding, authenticated calls can enrich client profile details.
+- **High Project Volume:** Freelancer projects receive dozens of bids within minutes. The platform-specific `max_existing_bids: 40` and shorter `max_gig_age_minutes: 360` correctly prevent chasing stale projects.
+
+#### 6. Questions for owner
+- None at this stage. All requirements and acceptance criteria for Phase 1b are satisfied.
+
+#### 7. Proposed next phase and inputs needed
+- **Phase 2: Storage, dedupe, scheduling** (SQLAlchemy models, Alembic migrations, repositories, idempotent upserts, bid-count snapshots, APScheduler background runner with jitter, and circuit breaker).
+- *Inputs needed:* None. Can begin Phase 2.
+
+#### 8. Handoff note
+Phase 1b is complete. `FreelancerClient` queries the official Freelancer REST API using `PoliteHttpClient` with server-side skill filtering and deduplication. The pure-function parser correctly normalizes multicurrency budgets to USD via live API exchange rates and handles hourly projects cleanly. All 101 tests pass, linters and strict mypy are green, and `gigradar scrape-once freelancer --limit 5` works live. Ready for **Phase 2** (Storage, dedupe, scheduling).
+
