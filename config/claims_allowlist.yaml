@@ -26,7 +26,7 @@ allowed_claims:
   data_engineering:
     - "Relational schema design, normalization, data cleaning, and deduplication"
     - "ETL pipelines using PostgreSQL and SQLAlchemy ORM (TicketSense project resolving 441 customer duplicates and schema normalization)"
-    - "Web scraping and automated data collection pipelines in Python"
+    - "Web scraping and ETL fundamentals from the DEPI data engineering track"
 
   deployment:
     - "FastAPI REST API backend development and model serving"
@@ -35,7 +35,7 @@ allowed_claims:
 
   fundamentals_and_dsp:
     - "The ML Blueprint: derived core ML algorithms from first principles in NumPy, including manual neural network forward/backward passes"
-    - "Signal processing and DSP: leading DSP pipeline for FMCW Radar simulation, range-velocity-angle data cube extraction, and CFAR detection in MATLAB/Python"
+    - "Signal processing and DSP: leading DSP pipeline for FMCW Radar simulation; completed range-velocity-angle data cube extraction, with CFAR detection currently in progress in MATLAB/Python"
 
   deep_learning:
     # Strictly honest phrasing per Master Prompt section 2

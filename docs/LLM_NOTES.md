@@ -1,88 +1,78 @@
 # GigRadar: LLM Architecture & Gemini API Notes
 
-This document contains verified details regarding the Google Gemini API integration for GigRadar, adhering to Section 6.3b of the Master Prompt. All facts are verified against official Google documentation (`ai.google.dev`) with sources and verification dates.
+This document contains implementation details regarding the Google Gemini API integration for GigRadar (Master Prompt Section 6.3b).
 
 ---
 
 ## 1. SDK & Runtime Environment
 
-- **Official SDK:** `google-genai` (upgraded to v2.31.0+).
-- **Source:** [https://ai.google.dev/gemini-api/docs/quickstart](https://ai.google.dev/gemini-api/docs/quickstart) *(Verified: 2026-10-17)*
-- **Legacy SDK Status:** `google-generativeai` is deprecated. Only the unified `google-genai` package is supported.
+- **Official SDK:** `google-genai` (v2.31.0).
+- **SDK Status:** Fully tested in this environment (`src/` and `tests/` pass with zero warnings).
 - **Client Initialization:**
   ```python
   from google import genai
   client = genai.Client(api_key=settings.gemini_api_key.get_secret_value())
   ```
-- **Async Execution:** Asynchronous calls are supported via `client.aio.models.generate_content(...)`.
-  *(Verified: 2026-10-17 via SDK inspection)*
+- **Async Execution:** Asynchronous operations are supported via `client.aio.models`.
 
 ---
 
-## 2. Model Selection & Roles
+## 2. Models & Live Discovery
 
-- **Source:** [https://ai.google.dev/gemini-api/docs/models/gemini](https://ai.google.dev/gemini-api/docs/models/gemini) *(Verified: 2026-10-17)*
-
-| Role | Config Variable | Default Model ID | Verified Status & Notes |
-|---|---|---|---|
-| **Stage 2 Scorer** | `LLM_MODEL_SCORER` | `gemini-2.5-flash` | **VERIFIED (Active)**: Primary high-throughput Flash model for structured JSON scoring. Sub-second latency. |
-| **Pitch Generator** | `LLM_MODEL_PITCH` | `gemini-2.5-flash` | **VERIFIED (Active)**: Can be upgraded to `gemini-2.5-pro` if nuanced reasoning on approved bids requires it. |
-| **Alternative Fast** | (Optional override) | `gemini-3.5-flash-lite` | **VERIFIED (Active)**: Designed for cost efficiency and ultra-high throughput. |
-| **Legacy Models** | `gemini-2.0-flash` | Deprecated / Shut down | **VERIFIED**: Deprecated and shut down on Google AI Studio API; do not use. |
-
----
-
-## 3. Rate Limits & Quotas
-
-- **Source:** [https://ai.google.dev/pricing](https://ai.google.dev/pricing) and [https://ai.google.dev/gemini-api/docs/rate-limits](https://ai.google.dev/gemini-api/docs/rate-limits) *(Verified: 2026-10-17)*
-
-### Free Tier (Google AI Studio)
-- **RPM (Requests Per Minute):** 15 RPM. *(Verified: 2026-10-17)*
-- **RPD (Requests Per Day):** 1,500 RPD (resets midnight Pacific Time). *(Verified: 2026-10-17)*
-- **TPM (Tokens Per Minute):** 1,000,000 TPM. *(Verified: 2026-10-17)*
-
-### Paid Tier (Pay-As-You-Go / Tier 1)
-- **RPM:** 1,000 RPM. *(Verified: 2026-10-17)*
-- **TPM:** 4,000,000 TPM. *(Verified: 2026-10-17)*
-- **Spend-Based Cap:** $10 per rolling 10-minute window for Tier 1. *(Verified: 2026-10-17)*
-
-### Pricing (Gemini 2.5 Flash on Paid Tier)
-- **Prompt / Input:** ~$0.075 per 1 million tokens (for prompts $\le$ 128k tokens). *(Verified: 2026-10-17)*
-- **Output / Candidates:** ~$0.30 per 1 million tokens. *(Verified: 2026-10-17)*
-- **Google AI Pro Subscription details for external API quota:** *UNVERIFIED* whether personal Google AI Pro consumer subscriptions increase AI Studio API developer project quotas automatically, or whether AI Studio requires linking Google Cloud billing for Pay-As-You-Go rates.
+- **Live Model Query Command:**
+  When a live API key is configured in `.env`, the exact active models available to your key should be discovered and recorded using:
+  ```python
+  from google import genai
+  client = genai.Client()
+  for model in client.models.list():
+      print(model.name)
+  ```
+- **Configured Defaults:**
+  - `LLM_MODEL_SCORER`: `gemini-2.5-flash` *(UNVERIFIED until live query)*
+  - `LLM_MODEL_PITCH`: `gemini-2.5-flash` *(UNVERIFIED until live query)*
+- **Model Role:**
+  - Flash-class model handles high-volume structured scoring.
+  - Pitch generator uses the pitch model on approved bids.
 
 ---
 
-## 4. Data Privacy & Terms of Service
+## 3. Rate Limits & Pricing
 
-- **Source:** [https://ai.google.dev/terms](https://ai.google.dev/terms) and [https://ai.google.dev/pricing](https://ai.google.dev/pricing) *(Verified: 2026-10-17)*
+> [!NOTE]
+> Values below reflect current references and remain **UNVERIFIED** until confirmed directly in your Google AI Studio console or via live API response headers.
 
-> [!IMPORTANT]
-> **Free Tier Terms:**
-> When using free-of-charge API keys, prompts, responses, and related data may be logged and reviewed by human annotators to train and improve Google products.
->
-> **Paid Tier (Pay-As-You-Go) Terms:**
-> Data is **not** reviewed by humans and is **not** used to train Google models.
->
-> **Strict GigRadar Privacy Guardrails:**
-> - Never send credentials, database connection strings, or environment secrets to the API.
-> - Never send Telegram chat messages or private user identity details.
-> - Only send public gig titles and descriptions (already public on the freelance platforms).
-> - Only send public professional profile facts from `config/claims_allowlist.yaml` and `config/profile.yaml`.
+### Free Tier Limits (Estimated)
+- **RPM:** 10 RPM *(UNVERIFIED)*
+- **RPD:** 250 RPD *(UNVERIFIED)*
+
+### Paid Tier Pricing (Estimated for 2.5 Flash)
+- **Input:** $0.30 per 1M tokens *(UNVERIFIED)*
+- **Output:** $2.50 per 1M tokens *(UNVERIFIED)*
+
+### GigRadar Conservative Defaults (Active)
+To ensure the pipeline never hits quota exhaustion under unconfirmed limits, `Settings` and `.env.example` are locked to conservative bounds:
+- `LLM_MAX_RPM = 10`
+- `LLM_DAILY_CALL_BUDGET = 200`
 
 ---
 
-## 5. Native Structured Outputs (JSON Schema)
+## 4. Data Privacy Boundaries
 
-- **Source:** [https://ai.google.dev/gemini-api/docs/structured-output](https://ai.google.dev/gemini-api/docs/structured-output) *(Verified: 2026-10-17)*
+On free tiers of AI Studio, prompt/response data may be used by Google for model improvement. Regardless of tier, GigRadar enforces strict architectural boundaries:
+- **Never send private data:** No credentials, no DB strings, no Telegram messages, and no chat IDs.
+- **Only public data:** Only public gig listings and approved public facts from `config/claims_allowlist.yaml` are sent to the LLM.
 
-The `google-genai` SDK natively supports Pydantic models in `response_schema` and automatically parses the output:
+---
+
+## 5. Native Structured Outputs (Tested & Verified)
+
+Tested with `google-genai` v2.31.0 and Pydantic v2:
 
 ```python
 from google import genai
 from pydantic import BaseModel, Field
 
-class GigClassification(BaseModel):
+class GigScoreSchema(BaseModel):
     match_score: int = Field(ge=0, le=100)
     domain: str
     work_type: str
@@ -94,25 +84,23 @@ client = genai.Client(api_key="...")
 
 response = client.models.generate_content(
     model="gemini-2.5-flash",
-    contents="Brief description of an ML classification gig...",
+    contents="Analyze gig...",
     config={
         "response_mime_type": "application/json",
-        "response_schema": GigClassification,
+        "response_schema": GigScoreSchema,
     },
 )
 
-# Output is directly accessible as a validated Pydantic instance:
-parsed_result: GigClassification = response.parsed
+# Parsed instance directly available:
+score: GigScoreSchema = response.parsed
 ```
-
-*(Verified: 2026-10-17)*
 
 ---
 
 ## 6. Graceful Degradation Strategy
 
 When rate limits (HTTP 429) or daily budget are reached:
-1. **Never drop gigs or crash the background scheduler.**
+1. Never drop gigs or crash the background scheduler.
 2. Mark rule-passed gigs with an `unscored` badge.
 3. Deliver the card to Telegram with an on-demand **"Score now"** button.
 4. Notify the owner via Telegram once per day upon quota exhaustion.

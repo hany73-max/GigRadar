@@ -9,6 +9,8 @@ def test_settings_defaults() -> None:
     assert settings.score_threshold == 65
     assert settings.auto_submit is False
     assert settings.poll_interval_seconds_mostaql == 120
+    assert settings.llm_max_rpm == 10
+    assert settings.llm_daily_call_budget == 200
 
 
 def test_settings_env_override(monkeypatch: object) -> None:

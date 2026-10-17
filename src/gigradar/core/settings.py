@@ -19,8 +19,8 @@ class Settings(BaseSettings):
     gemini_api_key: SecretStr | None = Field(default=None, alias="GEMINI_API_KEY")
     llm_model_scorer: str = Field(default="gemini-2.5-flash", alias="LLM_MODEL_SCORER")
     llm_model_pitch: str = Field(default="gemini-2.5-flash", alias="LLM_MODEL_PITCH")
-    llm_daily_call_budget: int = Field(default=1000, alias="LLM_DAILY_CALL_BUDGET")
-    llm_max_rpm: int = Field(default=15, alias="LLM_MAX_RPM")
+    llm_daily_call_budget: int = Field(default=200, alias="LLM_DAILY_CALL_BUDGET")
+    llm_max_rpm: int = Field(default=10, alias="LLM_MAX_RPM")
 
     # Telegram Bot configuration
     telegram_bot_token: SecretStr | None = Field(default=None, alias="TELEGRAM_BOT_TOKEN")
