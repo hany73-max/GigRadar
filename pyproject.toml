@@ -19,6 +19,8 @@ dependencies = [
     "httpx>=0.27.0,<1.0.0",
     "tenacity>=8.3.0,<10.0.0",
     "sqlalchemy>=2.0.0,<3.0.0",
+    "beautifulsoup4>=4.12.0",
+    "lxml>=5.2.0",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +30,7 @@ dev = [
     "ruff>=0.4.0",
     "mypy>=1.10.0",
     "types-pyyaml>=6.0.12",
+    "types-beautifulsoup4>=4.12.0",
 ]
 
 [project.scripts]

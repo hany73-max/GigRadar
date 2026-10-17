@@ -1,4 +1,11 @@
-"""Command Line Interface for GigRadar."""
+import sys
+from typing import Any
+
+# Ensure UTF-8 output on Windows consoles to support Arabic text
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 import typer
 from rich.console import Console
@@ -15,7 +22,7 @@ app = typer.Typer(
     help="GigRadar: Multi-layer freelancing automation system.",
     no_args_is_help=True,
 )
-console = Console()
+console = Console(legacy_windows=False)
 
 
 def version_callback(value: bool) -> None:
@@ -165,6 +172,115 @@ def doctor(
             "[bold red]Doctor check found issues. Review table errors above before proceeding.[/bold red]\n",
         )
         raise typer.Exit(code=1)
+
+
+async def _run_scrape_once(platform_name: str, limit: int, fetch_details: bool) -> list[Any]:
+    from gigradar.platforms.khamsat.client import KhamsatClient
+    from gigradar.platforms.mostaql.client import MostaqlClient
+
+    platform_lower = platform_name.lower().strip()
+    if platform_lower == "mostaql":
+        async with MostaqlClient() as client:
+            client.config.max_pages_per_run = 1
+            stubs = await client.list_new_gigs()
+            gigs = []
+            for stub in stubs[:limit]:
+                if fetch_details:
+                    gig = await client.fetch_gig_detail(stub)
+                else:
+                    from gigradar.platforms.mostaql.parser import parse_mostaql_detail
+
+                    gig = parse_mostaql_detail(
+                        f"<html><head><link rel='canonical' href='{stub.url}'></head><body><h1 class='heada__title'>{stub.title}</h1><div id='projectDetailsTab'><div class='text-wrapper-div'>{stub.brief_description or stub.title}</div></div></body></html>",
+                        stub=stub,
+                    )
+                gigs.append(gig)
+            return gigs
+
+    elif platform_lower == "khamsat":
+        async with KhamsatClient() as client:
+            client.config.max_pages_per_run = 1
+            stubs = await client.list_new_gigs()
+            gigs = []
+            for stub in stubs[:limit]:
+                gig = await client.fetch_gig_detail(stub)
+                gigs.append(gig)
+            return gigs
+
+    else:
+        raise ValueError(f"Unknown platform '{platform_name}'. Supported platforms: mostaql, khamsat")
+
+
+@app.command(name="scrape-once")
+def scrape_once(
+    platform: str = typer.Argument(
+        ...,
+        help="Target platform to scrape: 'mostaql' or 'khamsat'.",
+    ),
+    limit: int = typer.Option(
+        5,
+        "--limit",
+        "-n",
+        help="Maximum number of gigs to fetch and display.",
+    ),
+    fetch_details: bool = typer.Option(
+        True,
+        "--fetch-details/--no-details",
+        help="Fetch full details for stubs (Mostaql only).",
+    ),
+) -> None:
+    """Scrape and print real parsed gigs from a platform in a readable table."""
+    import asyncio
+
+    platform_lower = platform.lower().strip()
+    if platform_lower not in {"mostaql", "khamsat"}:
+        console.print(f"[bold red]Error:[/bold red] Unsupported platform '{platform}'. Choose 'mostaql' or 'khamsat'.")
+        raise typer.Exit(code=1)
+
+    console.print(f"\n[bold cyan]Scraping once from [green]{platform_lower}[/green] (limit: {limit})...[/bold cyan]\n")
+
+    try:
+        gigs = asyncio.run(_run_scrape_once(platform_lower, limit=limit, fetch_details=fetch_details))
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[bold red]Scraping failed:[/bold red] {exc}")
+        raise typer.Exit(code=1) from None
+
+    table = Table(
+        title=f"Parsed Gigs from {platform_lower.capitalize()} ({len(gigs)} items)",
+        show_header=True,
+        header_style="bold magenta",
+    )
+    table.add_column("ID", style="cyan", no_wrap=True)
+    table.add_column("Title", style="bold")
+    table.add_column("Budget")
+    table.add_column("Bids", justify="right")
+    table.add_column("Posted (UTC)")
+    table.add_column("Client")
+    table.add_column("Lang")
+
+    for gig in gigs:
+        if gig.budget_min and gig.budget_max:
+            budget_str = f"${gig.budget_min:g} - ${gig.budget_max:g}"
+        elif gig.budget_min:
+            budget_str = f"${gig.budget_min:g}"
+        else:
+            budget_str = "-"
+
+        posted_str = gig.posted_at.strftime("%Y-%m-%d %H:%M") if gig.posted_at else "-"
+        client_str = gig.client_name or "-"
+
+        table.add_row(
+            gig.external_id,
+            gig.title[:35],
+            budget_str,
+            str(gig.bids_count),
+            posted_str,
+            client_str[:13],
+            gig.language,
+        )
+
+    console.print(table)
+    console.print()
 
 
 if __name__ == "__main__":
