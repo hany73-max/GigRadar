@@ -1,5 +1,4 @@
-"""Tests for platform orchestrator pipeline: age limits, deduplication, crash recovery, and out-of-order handling."""
-
+import asyncio
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -22,16 +21,28 @@ from gigradar.pipeline.orchestrator import PlatformOrchestrator
 class MockPlatformClient:
     """Mock PlatformClient recording calls and simulating platform listing & detail fetching."""
 
-    def __init__(self, name: str, stubs: list[GigStub]) -> None:
+    def __init__(
+        self,
+        name: str,
+        stubs: list[GigStub],
+        detail_delay: float = 0.0,
+        fail_on_details: set[str] | None = None,
+    ) -> None:
         self.name = name
         self.stubs = stubs
+        self.detail_delay = detail_delay
+        self.fail_on_details = fail_on_details or set()
         self.detail_fetch_calls: list[str] = []
 
     async def list_new_gigs(self, since: datetime | None = None) -> list[GigStub]:
         return list(self.stubs)
 
     async def fetch_gig_detail(self, stub: GigStub) -> Gig:
+        if self.detail_delay > 0:
+            await asyncio.sleep(self.detail_delay)
         self.detail_fetch_calls.append(stub.external_id)
+        if stub.external_id in self.fail_on_details:
+            raise RuntimeError(f"Simulated detail fetch error for {stub.external_id}")
         return Gig(
             platform_id=self.name,
             external_id=stub.external_id,
@@ -270,3 +281,338 @@ async def test_crash_safety_tick_killed_halfway_completed_by_next_tick(
         assert recovered_gig is not None
         assert recovered_gig.processing_state == "detail_fetched"
         assert recovered_gig.description == "Full project description"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_platform_ticks_no_database_locked(tmp_path: Path) -> None:
+    """Two platforms ticking concurrently with delays produce no 'database is locked' and both finish."""
+    from gigradar.db.session import create_engine_from_url
+
+    db_file = tmp_path / "concurrent_test.db"
+    db_url = f"sqlite+aiosqlite:///{db_file.as_posix()}"
+    engine = create_engine_from_url(db_url)
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    now = datetime.now(UTC)
+    stubs_mostaql = [
+        GigStub(
+            platform_id="mostaql",
+            external_id="m_1",
+            url="https://mostaql.com/project/m_1",
+            title="Mostaql Project 1",
+            posted_at=now - timedelta(minutes=5),
+            bids_count=1,
+            detail_level="full",
+        ),
+        GigStub(
+            platform_id="mostaql",
+            external_id="m_2",
+            url="https://mostaql.com/project/m_2",
+            title="Mostaql Project 2",
+            posted_at=now - timedelta(minutes=10),
+            bids_count=2,
+            detail_level="full",
+        ),
+    ]
+
+    stubs_freelancer = [
+        GigStub(
+            platform_id="freelancer",
+            external_id="f_1",
+            url="https://freelancer.com/projects/f_1",
+            title="Freelancer Project 1",
+            posted_at=now - timedelta(minutes=5),
+            bids_count=5,
+            detail_level="full",
+        ),
+        GigStub(
+            platform_id="freelancer",
+            external_id="f_2",
+            url="https://freelancer.com/projects/f_2",
+            title="Freelancer Project 2",
+            posted_at=now - timedelta(minutes=10),
+            bids_count=6,
+            detail_level="full",
+        ),
+    ]
+
+    # Mostaql client sleeps 50ms between detail fetches while freelancer also ticks
+    client_mostaql = MockPlatformClient("mostaql", stubs=stubs_mostaql, detail_delay=0.05)
+    client_freelancer = MockPlatformClient("freelancer", stubs=stubs_freelancer, detail_delay=0.01)
+
+    orchestrator = PlatformOrchestrator(engine=engine)
+
+    try:
+        # Run both ticks concurrently
+        res_m, res_f = await asyncio.gather(
+            orchestrator.run_tick("mostaql", client=client_mostaql),
+            orchestrator.run_tick("freelancer", client=client_freelancer),
+        )
+
+        assert res_m.success is True
+        assert res_m.gigs_new == 2
+        assert res_f.success is True
+        assert res_f.gigs_new == 2
+
+        # Verify all 4 gigs were saved with detail_fetched
+        session_factory = async_sessionmaker(bind=engine, class_=AsyncSession)
+        async with session_factory() as session:
+            from gigradar.db.repositories.platform_repo import PlatformRepository
+
+            plat_repo = PlatformRepository(session)
+            p_m = await plat_repo.get_by_name("mostaql")
+            p_f = await plat_repo.get_by_name("freelancer")
+            assert p_m is not None
+            assert p_f is not None
+
+            repo = GigRepository(session)
+            m1 = await repo.get_by_external_id(p_m.id, "m_1")
+            m2 = await repo.get_by_external_id(p_m.id, "m_2")
+            f1 = await repo.get_by_external_id(p_f.id, "f_1")
+            f2 = await repo.get_by_external_id(p_f.id, "f_2")
+
+            assert m1 is not None and m1.processing_state == "detail_fetched"
+            assert m2 is not None and m2.processing_state == "detail_fetched"
+            assert f1 is not None and f1.processing_state == "detail_fetched"
+            assert f2 is not None and f2.processing_state == "detail_fetched"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_exception_after_first_detail_fetch_retains_completed_gigs(tmp_path: Path) -> None:
+    """An unhandled crash mid-tick keeps already stored gigs in detail_fetched; next tick completes the rest."""
+    from gigradar.db.session import create_engine_from_url
+
+    db_file = tmp_path / "mid_tick_crash.db"
+    db_url = f"sqlite+aiosqlite:///{db_file.as_posix()}"
+    engine = create_engine_from_url(db_url)
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    now = datetime.now(UTC)
+    stubs = [
+        GigStub(
+            platform_id="mostaql",
+            external_id="proj_1",
+            url="https://mostaql.com/project/proj_1",
+            title="First Project",
+            posted_at=now - timedelta(minutes=10),
+            detail_level="full",
+        ),
+        GigStub(
+            platform_id="mostaql",
+            external_id="proj_2",
+            url="https://mostaql.com/project/proj_2",
+            title="Second Project",
+            posted_at=now - timedelta(minutes=10),
+            detail_level="full",
+        ),
+    ]
+
+    class CrashingClient(MockPlatformClient):
+        async def fetch_gig_detail(self, stub: GigStub) -> Gig:
+            if stub.external_id == "proj_2":
+                raise KeyboardInterrupt("Simulated sudden kill mid-tick")
+            return await super().fetch_gig_detail(stub)
+
+    client_crash = CrashingClient("mostaql", stubs=stubs)
+    orchestrator = PlatformOrchestrator(engine=engine)
+
+    try:
+        # Tick 1 crashes on proj_2
+        with pytest.raises(KeyboardInterrupt):
+            await orchestrator.run_tick("mostaql", client=client_crash)
+
+        session_factory = async_sessionmaker(bind=engine, class_=AsyncSession)
+        async with session_factory() as session:
+            repo = GigRepository(session)
+            # proj_1 was committed immediately after its detail fetch
+            p1 = await repo.get_by_external_id(1, "proj_1")
+            assert p1 is not None
+            assert p1.processing_state == "detail_fetched"
+
+            # proj_2 was committed in the batch upsert as 'new'
+            p2 = await repo.get_by_external_id(1, "proj_2")
+            assert p2 is not None
+            assert p2.processing_state == "new"
+
+        # Tick 2 runs with a healthy client
+        client_healthy = MockPlatformClient("mostaql", stubs=[])
+        res2 = await orchestrator.run_tick("mostaql", client=client_healthy)
+        assert res2.success is True
+
+        # Only proj_2 should have been fetched; proj_1 was NOT re-fetched
+        assert client_healthy.detail_fetch_calls == ["proj_2"]
+
+        async with session_factory() as session:
+            repo = GigRepository(session)
+            p2_done = await repo.get_by_external_id(1, "proj_2")
+            assert p2_done is not None
+            assert p2_done.processing_state == "detail_fetched"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_leftover_new_gigs_marked_stale_if_now_aged(tmp_path: Path) -> None:
+    """Before fetching details for leftover 'new' gigs, age check marks aged gigs 'stale' without fetching."""
+    from gigradar.db.session import create_engine_from_url
+
+    db_file = tmp_path / "leftover_age_test.db"
+    db_url = f"sqlite+aiosqlite:///{db_file.as_posix()}"
+    engine = create_engine_from_url(db_url)
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    now = datetime.now(UTC)
+    # Stored 25 hours ago (> Mostaql max_gig_age_minutes: 1440)
+    aged_stub = GigStub(
+        platform_id="mostaql",
+        external_id="aged_leftover_1",
+        url="https://mostaql.com/project/aged_1",
+        title="Aged Leftover Project",
+        posted_at=now - timedelta(hours=25),
+        detail_level="full",
+    )
+
+    session_factory = async_sessionmaker(bind=engine, class_=AsyncSession)
+    async with session_factory() as session:
+        from gigradar.db.repositories.platform_repo import PlatformRepository
+
+        plat_repo = PlatformRepository(session)
+        p, _ = await plat_repo.get_or_create("mostaql", "https://mostaql.com")
+        repo = GigRepository(session)
+        await repo.upsert_stub(p.id, aged_stub, processing_state="new")
+        await session.commit()
+
+    client = MockPlatformClient("mostaql", stubs=[])
+    orchestrator = PlatformOrchestrator(engine=engine)
+
+    try:
+        res = await orchestrator.run_tick("mostaql", client=client)
+        assert res.success is True
+        # Details must NOT be fetched for aged gig
+        assert client.detail_fetch_calls == []
+
+        async with session_factory() as session:
+            repo = GigRepository(session)
+            gig = await repo.get_by_external_id(1, "aged_leftover_1")
+            assert gig is not None
+            assert gig.processing_state == "stale"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_failure_policy_max_detail_attempts_and_breaker(tmp_path: Path) -> None:
+    """Test failure policy: detail_attempts, marking detail_failed after max attempts, and breaker rules."""
+    from gigradar.db.repositories.platform_repo import PlatformRepository
+    from gigradar.db.session import create_engine_from_url
+
+    db_file = tmp_path / "failure_policy.db"
+    db_url = f"sqlite+aiosqlite:///{db_file.as_posix()}"
+    engine = create_engine_from_url(db_url)
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    now = datetime.now(UTC)
+    stub_fail = GigStub(
+        platform_id="mostaql",
+        external_id="fail_gig_1",
+        url="https://mostaql.com/project/fail_1",
+        title="Failing Project",
+        posted_at=now - timedelta(minutes=5),
+        detail_level="full",
+    )
+
+    session_factory = async_sessionmaker(bind=engine, class_=AsyncSession)
+    orchestrator = PlatformOrchestrator(engine=engine, max_detail_attempts=2)
+
+    try:
+        # Tick 1: single detail fetch fails. Does NOT count as a platform failure (attempts < 2)
+        client_fail_1 = MockPlatformClient(
+            "mostaql", stubs=[stub_fail], fail_on_details={"fail_gig_1"}
+        )
+        res1 = await orchestrator.run_tick("mostaql", client=client_fail_1)
+        # Breaker does NOT trip for single detail failure
+        assert res1.success is True
+
+        async with session_factory() as session:
+            from gigradar.db.repositories.scrape_run_repo import ScrapeRunRepository
+
+            plat_repo = PlatformRepository(session)
+            plat = await plat_repo.get_by_id(1)
+            assert plat is not None
+            assert plat.is_paused is False
+
+            scrape_repo = ScrapeRunRepository(session)
+            consecutive = await scrape_repo.count_consecutive_errors(1)
+            assert consecutive == 0  # not a platform failure
+
+            gig_repo = GigRepository(session)
+            g1 = await gig_repo.get_by_external_id(1, "fail_gig_1")
+            assert g1 is not None
+            assert g1.detail_attempts == 1
+            assert g1.processing_state == "new"  # retriable
+
+        # Tick 2: second failure reaches max_detail_attempts (2).
+        # Should transition to 'detail_failed' and not count as platform failure
+        client_fail_2 = MockPlatformClient("mostaql", stubs=[], fail_on_details={"fail_gig_1"})
+        res2 = await orchestrator.run_tick("mostaql", client=client_fail_2)
+        assert res2.success is True
+
+        async with session_factory() as session:
+            gig_repo = GigRepository(session)
+            g2 = await gig_repo.get_by_external_id(1, "fail_gig_1")
+            assert g2 is not None
+            assert g2.detail_attempts == 2
+            assert g2.processing_state == "detail_failed"
+
+        # Tick 3: gig in 'detail_failed' state is NO LONGER retried
+        client_fail_3 = MockPlatformClient("mostaql", stubs=[])
+        res3 = await orchestrator.run_tick("mostaql", client=client_fail_3)
+        assert res3.success is True
+        assert client_fail_3.detail_fetch_calls == []
+
+        # Part 2: At least 2 detail fetches attempted in the tick and ALL failed -> platform failure
+        stub_a = GigStub(
+            platform_id="mostaql",
+            external_id="all_fail_a",
+            url="https://mostaql.com/project/a",
+            title="A",
+            posted_at=now - timedelta(minutes=5),
+            detail_level="full",
+        )
+        stub_b = GigStub(
+            platform_id="mostaql",
+            external_id="all_fail_b",
+            url="https://mostaql.com/project/b",
+            title="B",
+            posted_at=now - timedelta(minutes=5),
+            detail_level="full",
+        )
+        client_all_fail = MockPlatformClient(
+            "mostaql", stubs=[stub_a, stub_b], fail_on_details={"all_fail_a", "all_fail_b"}
+        )
+        res4 = await orchestrator.run_tick("mostaql", client=client_all_fail)
+        # All 2 detail fetches failed -> circuit breaker records failure
+        assert res4.success is False
+
+        async with session_factory() as session:
+            from gigradar.db.repositories.scrape_run_repo import ScrapeRunRepository
+
+            plat_repo = PlatformRepository(session)
+            plat = await plat_repo.get_by_id(1)
+            assert plat is not None
+
+            scrape_repo = ScrapeRunRepository(session)
+            consecutive = await scrape_repo.count_consecutive_errors(1)
+            assert consecutive == 1
+    finally:
+        await engine.dispose()

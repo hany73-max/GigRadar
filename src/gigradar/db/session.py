@@ -55,7 +55,10 @@ def create_engine_from_url(database_url: str) -> AsyncEngine:
     }
 
     if is_sqlite:
-        # SQLite specific options
+        from sqlalchemy.pool import NullPool
+
+        # SQLite specific options: NullPool prevents unclosed/lingering connections across loops
+        engine_kwargs["poolclass"] = NullPool
         engine = create_async_engine(async_url, **engine_kwargs)
 
         @event.listens_for(engine.sync_engine, "connect")

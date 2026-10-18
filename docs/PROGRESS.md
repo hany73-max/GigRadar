@@ -8,7 +8,7 @@ This document is the single source of truth for the project's current state, dec
 
 - **Current Phase:** Phase 2: Storage, dedupe, scheduling (COMPLETED)
 - **Next Phase:** Phase 3: Rules filter
-- **Overall System Health:** Green (All 121 unit tests passing, `ruff` clean, `mypy` clean on 51 source files, `scripts/check.ps1` passing, `gigradar doctor`, `gigradar db upgrade`, `gigradar db stats`, `gigradar run [--once]` operational)
+- **Overall System Health:** Green (All 125 unit tests passing, `ruff` clean, `mypy --strict` clean on 52 source files, 0 warnings with `-W error`, `scripts/check.ps1` passing, `gigradar doctor`, `gigradar db upgrade`, `gigradar db stats`, `gigradar run [--once]` operational)
 
 ---
 
@@ -310,34 +310,40 @@ uv run gigradar run --once
 ```
 
 #### 3. Test results
-- **Pytest:** 121 passed, 1 warning (SQLAlchemy test connection cleanup warning) in 8.75s.
-- **Ruff:** All checks passed (0 lint issues, 57 files formatted).
-- **Mypy:** Success: no issues found in 51 source files.
+- **Pytest:** 125 passed, 0 warnings (with `-W error`) in 7.44s.
+- **Ruff:** All checks passed (0 lint issues, 58 files formatted).
+- **Mypy:** Success: no issues found in 52 source files (`--strict` mode).
 - **Verification Script (`scripts/check.ps1`):** All checks passed successfully.
 
 #### 4. Decisions made and why
-- **Freelancer Skill IDs in Config:** Moved skill IDs out of `client.py` into `config/platforms.yaml` and removed ID 36 (Data Processing) to eliminate irrelevant data-entry gigs.
-- **Platform Max Gig Age Limits:**
-  - Freelancer: 360 minutes (6 hours) configured directly in `config/platforms.yaml`.
-  - Mostaql: 1440 minutes (24 hours) inherited from default `rules.yaml`.
-  - Khamsat: 1440 minutes (24 hours) inherited from default `rules.yaml`.
-- **Ingestion Age Limit Mechanics:** If a new gig's `posted_at` is older than `max_gig_age_minutes`, it is inserted as a stub with `processing_state="stale"` and its detail page is NOT fetched, saving network bandwidth and rate limits. Unknown `posted_at` is treated as fresh.
-- **Dialect-Safe JSON Serialization:** Standard SQLAlchemy `JSON` serializes Python `None` as the literal text `"null"`, which causes SQLite `IS NULL` filters to fail. Configured all JSON columns with `JSON(none_as_null=True)` to ensure real SQL `NULL` values.
-- **Crash Safety Recovery:** If the application process crashes midway through fetching details, the gig stubs remain in DB with `processing_state="new"`. On the next tick, the orchestrator queries all stubs in `"new"` state and finishes fetching their details before querying platform listings.
-- **Khamsat Non-Breaking Pagination:** Khamsat listings are sorted by activity, so pagination cannot terminate upon encountering a previously seen gig ID. The orchestrator inspects all fetched items on the listing page.
-- **Doctor Command Migration Non-Fatal:** Treated pending migrations in `gigradar doctor` as a yellow diagnostic warning rather than a fatal exit code 1, allowing doctors to inform users cleanly before `gigradar db upgrade` is executed.
+- **Short Database Transactions:** Commits are executed immediately after:
+  1. `platform get_or_create`
+  2. `scrape_run start_run`
+  3. The batch of stub upserts for a listing
+  4. EACH gig detail update (and detail failure recording / stale marking)
+  5. `scrape_run finish_run` and circuit breaker updates.
+  No write transaction is ever held open across network calls (`fetch_gig_detail`, `list_new_gigs`, or rate-limiter sleeps), eliminating SQLite write-lock contention across concurrent platform ticks.
+- **Concurrent Platform Ticks Verified:** Tested on file-based SQLite in `tmp_path`: two platforms ticking concurrently with network delays produce no "database is locked" errors and both finish cleanly.
+- **Mid-Tick Crash Safety:** An unhandled exception or kill during detail fetching retains all previously fetched gigs in `detail_fetched` state; the next tick completes remaining stubs without re-fetching already finished gigs.
+- **Failure Policy & Migration #2:**
+  - Added `detail_attempts: int` column to `gigs` table via Alembic migration #2 (`0002_add_detail_attempts.py`) with full upgrade and downgrade support.
+  - Added `max_detail_attempts: int = 3` setting in `Settings`.
+  - When detail fetch fails, `detail_attempts` is incremented. If `detail_attempts >= max_detail_attempts`, the gig is marked `processing_state="detail_failed"` and is no longer retried.
+  - Circuit Breaker Failure Policy: An individual failed detail does NOT count as a platform failure. The circuit breaker only records a failure when listing fails, or when at least 2 detail fetches were attempted in the tick and ALL failed.
+- **Leftover "New" Gigs Age Check:** Before fetching details for leftover "new" gigs from prior interrupted runs, the orchestrator applies the platform's `max_gig_age_minutes` check. If now older, the gig is transitioned to `stale` without making a network detail call.
+- **SQLite NullPool & Connection Cleanup:** Fixed unclosed-connection SAWarning by properly scoping session usage within context managers in `cli.py` `db stats`, and configuring `NullPool` for SQLite file engines in `create_engine_from_url` to prevent abandoned connection fairies across event loops.
 
 #### 5. Known issues / risks
 - None. System is fully operational and green.
 
 #### 6. Questions for owner
-- None at this stage. All requirements and amendments for Phase 2 are implemented and tested.
+- None at this stage. All requirements and amendments for Phase 2 and Phase 2 fixes are implemented and tested.
 
 #### 7. Proposed next phase and inputs needed
 - **Phase 3: Rules-based pre-filter (section 6.2 of Master Prompt)**
 - *Inputs needed:* Confirmation of `min_hourly_rate_usd` default (suggested $25/hr) to add to `rules.yaml` alongside fixed budget threshold.
 
 #### 8. Handoff note
-Phase 2 storage, deduplication, and scheduling are complete. The async SQLite/PostgreSQL schema, Alembic migrations, repositories, pipeline orchestrator with age-limit stubbing (`stale`), circuit breaker with failure isolation, APScheduler runner with jitter, and Typer CLI commands (`db upgrade`, `db stats`, `run [--once]`) are fully tested across 121 tests. Ready for **Phase 3** (Rules-based pre-filter).
+Phase 2 storage, deduplication, scheduling, and concurrency/transaction fixes are complete. The async SQLite/PostgreSQL schema with migrations #1 and #2, repositories, pipeline orchestrator with short transactions, age-limit stubbing (`stale`), failure policy with `detail_failed`, circuit breaker with failure isolation, APScheduler runner with jitter, and Typer CLI commands (`db upgrade`, `db stats`, `run [--once]`) are fully verified across 125 tests. Ready for **Phase 3** (Rules-based pre-filter).
 
 

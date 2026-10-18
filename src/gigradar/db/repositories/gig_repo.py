@@ -182,6 +182,35 @@ class GigRepository:
         await self.session.flush()
         return gig
 
+    async def record_detail_failure(self, gig_id: int, max_attempts: int = 3) -> tuple[Gig, bool]:
+        """Record a failed detail fetch attempt, incrementing detail_attempts.
+
+        If attempts reach max_attempts, marks processing_state='detail_failed'.
+        Returns (gig, is_permanently_failed).
+        """
+        gig = await self.get_by_id(gig_id)
+        if gig is None:
+            raise ValueError(f"Cannot record detail failure for non-existent gig #{gig_id}")
+
+        gig.detail_attempts += 1
+        is_permanently_failed = gig.detail_attempts >= max_attempts
+        if is_permanently_failed:
+            gig.processing_state = "detail_failed"
+        gig.last_seen_at = utc_now()
+        await self.session.flush()
+        return gig, is_permanently_failed
+
+    async def mark_stale(self, gig_id: int) -> Gig:
+        """Mark a gig as 'stale' (e.g. exceeded max_gig_age_minutes)."""
+        gig = await self.get_by_id(gig_id)
+        if gig is None:
+            raise ValueError(f"Cannot mark non-existent gig #{gig_id} as stale")
+
+        gig.processing_state = "stale"
+        gig.last_seen_at = utc_now()
+        await self.session.flush()
+        return gig
+
     async def get_incomplete_gigs(self, platform_id: int) -> list[Gig]:
         """Retrieve gigs stuck in 'new' processing_state that need details fetched."""
         result = await self.session.execute(

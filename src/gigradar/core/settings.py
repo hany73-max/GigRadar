@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     # Filtering & pipeline
     score_threshold: int = Field(default=65, alias="SCORE_THRESHOLD")
     auto_submit: bool = Field(default=False, alias="AUTO_SUBMIT")
+    max_detail_attempts: int = Field(default=3, alias="MAX_DETAIL_ATTEMPTS")
 
     # Polling intervals
     poll_interval_seconds_mostaql: int = Field(default=120, alias="POLL_INTERVAL_SECONDS_MOSTAQL")

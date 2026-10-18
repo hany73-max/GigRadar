@@ -94,6 +94,9 @@ class Gig(Base):
     language: Mapped[str | None] = mapped_column(String(10), nullable=True)
     raw_html_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     detail_level: Mapped[str] = mapped_column(String(20), nullable=False, default="full")
+    detail_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     processing_state: Mapped[str] = mapped_column(
         String(30), nullable=False, default="new", index=True
     )

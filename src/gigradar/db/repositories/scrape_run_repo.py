@@ -82,7 +82,7 @@ class ScrapeRunRepository:
         return result.scalar_one_or_none()
 
     async def count_consecutive_errors(self, platform_id: int, limit: int = 10) -> int:
-        """Count the number of consecutive completed runs that had errors, newest first."""
+        """Count the number of consecutive completed runs that had platform errors, newest first."""
         result = await self.session.execute(
             select(ScrapeRun)
             .where(
@@ -95,7 +95,7 @@ class ScrapeRunRepository:
         runs = list(result.scalars().all())
         consecutive = 0
         for run in runs:
-            if run.errors_json:
+            if run.errors_json and any(e.get("platform_failure", True) for e in run.errors_json):
                 consecutive += 1
             else:
                 break

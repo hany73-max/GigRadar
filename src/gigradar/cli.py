@@ -448,21 +448,21 @@ def db_stats() -> None:
                 platform_repo = PlatformRepository(session)
                 scrape_run_repo = ScrapeRunRepository(session)
 
-            stats = await gig_repo.get_stats()
-            platforms = await platform_repo.list_all()
-            details: list[dict[str, Any]] = []
-            for plat in platforms:
-                last_run = await scrape_run_repo.get_last_run(plat.id)
-                details.append(
-                    {
-                        "name": plat.name,
-                        "is_paused": plat.is_paused,
-                        "paused_until": plat.paused_until,
-                        "pause_reason": plat.pause_reason,
-                        "last_run": last_run,
-                    }
-                )
-            return stats, details
+                stats = await gig_repo.get_stats()
+                platforms = await platform_repo.list_all()
+                details: list[dict[str, Any]] = []
+                for plat in platforms:
+                    last_run = await scrape_run_repo.get_last_run(plat.id)
+                    details.append(
+                        {
+                            "name": plat.name,
+                            "is_paused": plat.is_paused,
+                            "paused_until": plat.paused_until,
+                            "pause_reason": plat.pause_reason,
+                            "last_run": last_run,
+                        }
+                    )
+                return stats, details
         finally:
             await engine.dispose()
 
