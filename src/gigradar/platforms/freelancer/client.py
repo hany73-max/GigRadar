@@ -17,19 +17,18 @@ from gigradar.platforms.freelancer.parser import (
 
 logger = structlog.get_logger(__name__)
 
-# Discovered & verified Freelancer skill IDs (Master Prompt 6.1b item 4)
-FREELANCER_SKILL_IDS: dict[str, int] = {
-    "python": 13,
-    "machine_learning": 292,
-    "deep_learning": 1601,
-    "data_science": 761,
-    "nlp": 2833,
-    "computer_vision": 1558,
-    "web_scraping": 95,
-    "sql": 68,
-    "data_processing": 36,
-    "data_mining": 334,
-}
+# Default Freelancer skill IDs if not configured (Data Processing ID 36 excluded)
+DEFAULT_FREELANCER_SKILL_IDS: list[int] = [
+    13,  # Python
+    292,  # Machine Learning
+    1601,  # Deep Learning
+    761,  # Data Science
+    2833,  # NLP
+    1558,  # Computer Vision
+    95,  # Web Scraping
+    68,  # SQL
+    334,  # Data Mining
+]
 
 
 class FreelancerClient:
@@ -62,7 +61,13 @@ class FreelancerClient:
         else:
             self.config = config
 
-        self.skill_ids = skill_ids if skill_ids is not None else list(FREELANCER_SKILL_IDS.values())
+        if skill_ids is not None:
+            self.skill_ids = skill_ids
+        elif self.config.skill_ids is not None:
+            self.skill_ids = list(self.config.skill_ids)
+        else:
+            self.skill_ids = list(DEFAULT_FREELANCER_SKILL_IDS)
+
         self._cached_gigs: dict[str, Gig] = {}
 
         if http_client is None:

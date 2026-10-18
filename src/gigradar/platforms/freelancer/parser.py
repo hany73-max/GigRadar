@@ -216,6 +216,7 @@ def parse_freelancer_project(data: dict[str, Any]) -> Gig:
         tags_raw=tags_raw,
         language=language,
         project_type=project_type,
+        detail_level="full",
         raw_html_hash=None,
     )
 

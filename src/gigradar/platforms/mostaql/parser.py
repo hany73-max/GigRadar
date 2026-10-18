@@ -235,5 +235,6 @@ def parse_mostaql_detail(
         category_raw=category_raw,
         tags_raw=tags_raw,
         language=language,
+        detail_level="full",
         raw_html_hash=raw_hash,
     )

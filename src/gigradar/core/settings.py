@@ -69,3 +69,10 @@ def get_settings() -> Settings:
     if _settings is None:
         _settings = Settings()
     return _settings
+
+
+def reload_settings() -> Settings:
+    """Force reload of settings from current environment."""
+    global _settings
+    _settings = Settings()
+    return _settings

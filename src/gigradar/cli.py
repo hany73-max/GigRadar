@@ -15,7 +15,7 @@ from gigradar import __version__
 from gigradar.core.config_loader import validate_all_configs
 from gigradar.core.gemini_verifier import is_placeholder, mask_key, verify_gemini_key
 from gigradar.core.logging import setup_logging
-from gigradar.core.settings import get_settings
+from gigradar.core.settings import get_settings, reload_settings
 
 app = typer.Typer(
     name="gigradar",
@@ -54,7 +54,7 @@ def doctor(
     ),
 ) -> None:
     """Run diagnostics on environment, configurations, database URL, and live LLM key."""
-    settings = get_settings()
+    settings = reload_settings()
     setup_logging(log_level=settings.log_level, log_format="console")
 
     console.print(
@@ -63,6 +63,7 @@ def doctor(
 
     all_passed = True
     has_placeholder = False
+    has_pending_migration = False
 
     # 1. Configuration Files
     config_table = Table(
@@ -139,6 +140,50 @@ def doctor(
     console.print(env_table)
     console.print()
 
+    # 3. Database & Migrations Check
+    import asyncio
+
+    from gigradar.db.helpers import check_db_connectivity_and_version
+
+    db_table = Table(title="Database & Migrations", show_header=True, header_style="bold magenta")
+    db_table.add_column("Component", style="cyan", width=25)
+    db_table.add_column("Status", width=15)
+    db_table.add_column("Details", style="dim")
+
+    try:
+        is_healthy, db_msg, current_rev, head_rev = asyncio.run(
+            check_db_connectivity_and_version(database_url=settings.database_url)
+        )
+        if is_healthy:
+            db_table.add_row("Connection", "[green]PASS[/green]", "Connected successfully")
+            if current_rev == head_rev and current_rev is not None:
+                db_table.add_row(
+                    "Migrations", "[green]UP TO DATE[/green]", f"Revision: {current_rev}"
+                )
+            elif current_rev is None:
+                has_pending_migration = True
+                db_table.add_row(
+                    "Migrations", "[yellow]PENDING[/yellow]", "Run 'gigradar db upgrade'"
+                )
+            else:
+                has_pending_migration = True
+                db_table.add_row(
+                    "Migrations",
+                    "[yellow]PENDING[/yellow]",
+                    f"Current: {current_rev}, Head: {head_rev} (run 'gigradar db upgrade')",
+                )
+        else:
+            all_passed = False
+            db_table.add_row("Connection", "[red]FAIL[/red]", db_msg)
+            db_table.add_row("Migrations", "[yellow]SKIPPED[/yellow]", "No DB connection")
+    except Exception as exc:
+        all_passed = False
+        db_table.add_row("Connection", "[red]FAIL[/red]", str(exc))
+        db_table.add_row("Migrations", "[yellow]SKIPPED[/yellow]", "Error during check")
+
+    console.print(db_table)
+    console.print()
+
     # 3. Gemini API Live Key Verification
     llm_table = Table(
         title="Google Gemini API Verification", show_header=True, header_style="bold magenta"
@@ -185,9 +230,13 @@ def doctor(
     console.print()
 
     # Summary
-    if all_passed and not has_placeholder and raw_key:
+    if all_passed and not has_placeholder and not has_pending_migration and raw_key:
         console.print(
             "[bold green]Doctor check complete: System is healthy and fully configured![/bold green]\n"
+        )
+    elif all_passed and has_pending_migration:
+        console.print(
+            "[bold yellow]Doctor check complete: Configurations valid. Run 'gigradar db upgrade' to apply pending migrations.[/bold yellow]\n",
         )
     elif all_passed and has_placeholder:
         console.print(
@@ -345,6 +394,199 @@ def scrape_once(
 
     console.print(table)
     console.print()
+
+
+# ------------------------------------------------------------------------------
+# Database Subcommands: gigradar db upgrade, gigradar db stats
+# ------------------------------------------------------------------------------
+db_app = typer.Typer(
+    name="db",
+    help="Database maintenance and migration operations.",
+    no_args_is_help=True,
+)
+app.add_typer(db_app, name="db")
+
+
+@db_app.command(name="upgrade")
+def db_upgrade(
+    revision: str = typer.Option(
+        "head", "--revision", "-r", help="Target revision (default: head)."
+    ),
+) -> None:
+    """Run Alembic database migrations up to head."""
+    from gigradar.core.settings import reload_settings
+    from gigradar.db.helpers import run_db_upgrade
+
+    settings = reload_settings()
+    console.print(f"[bold cyan]Running database upgrade to '{revision}'...[/bold cyan]")
+    try:
+        run_db_upgrade(revision, database_url=settings.database_url)
+        console.print("[bold green]Database upgrade successful![/bold green]")
+    except Exception as exc:
+        console.print(f"[bold red]Database upgrade failed:[/bold red] {exc}")
+        raise typer.Exit(code=1) from None
+
+
+@db_app.command(name="stats")
+def db_stats() -> None:
+    """Display stored gigs per platform, total, last run, and paused platforms."""
+    import asyncio
+
+    from gigradar.core.settings import reload_settings
+    from gigradar.db.repositories.gig_repo import GigRepository
+    from gigradar.db.repositories.platform_repo import PlatformRepository
+    from gigradar.db.repositories.scrape_run_repo import ScrapeRunRepository
+    from gigradar.db.session import create_engine_from_url, get_async_session
+
+    settings = reload_settings()
+
+    async def fetch_stats() -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        engine = create_engine_from_url(settings.database_url)
+        try:
+            async with get_async_session(engine=engine) as session:
+                gig_repo = GigRepository(session)
+                platform_repo = PlatformRepository(session)
+                scrape_run_repo = ScrapeRunRepository(session)
+
+            stats = await gig_repo.get_stats()
+            platforms = await platform_repo.list_all()
+            details: list[dict[str, Any]] = []
+            for plat in platforms:
+                last_run = await scrape_run_repo.get_last_run(plat.id)
+                details.append(
+                    {
+                        "name": plat.name,
+                        "is_paused": plat.is_paused,
+                        "paused_until": plat.paused_until,
+                        "pause_reason": plat.pause_reason,
+                        "last_run": last_run,
+                    }
+                )
+            return stats, details
+        finally:
+            await engine.dispose()
+
+    try:
+        stats, details = asyncio.run(fetch_stats())
+    except Exception as exc:
+        console.print(f"[bold red]Failed fetching database stats:[/bold red] {exc}")
+        raise typer.Exit(code=1) from None
+
+    console.print("\n[bold cyan]=== GigRadar Database Stats ===[/bold cyan]\n")
+
+    summary_table = Table(title="Storage Summary", show_header=True, header_style="bold magenta")
+    summary_table.add_column("Metric", style="cyan")
+    summary_table.add_column("Value", style="bold")
+
+    summary_table.add_row("Total Stored Gigs", str(stats.get("total_gigs", 0)))
+    for state, count in stats.get("by_state", {}).items():
+        summary_table.add_row(f"State: {state}", str(count))
+    console.print(summary_table)
+    console.print()
+
+    plat_table = Table(
+        title="Platform Status & Last Scrape", show_header=True, header_style="bold magenta"
+    )
+    plat_table.add_column("Platform", style="cyan")
+    plat_table.add_column("Stored Gigs", justify="right")
+    plat_table.add_column("Status", style="bold")
+    plat_table.add_column("Last Run Started (UTC)")
+    plat_table.add_column("Last Found", justify="right")
+    plat_table.add_column("Last New", justify="right")
+    plat_table.add_column("Errors")
+
+    by_plat = stats.get("by_platform", {})
+    for item in details:
+        p_name = item["name"]
+        gig_count = str(by_plat.get(p_name, 0))
+        status = "[red]PAUSED[/red]" if item["is_paused"] else "[green]ACTIVE[/green]"
+        if item["is_paused"] and item["paused_until"]:
+            status += f" (until {item['paused_until'].strftime('%H:%M:%S')})"
+
+        lr = item["last_run"]
+        if lr:
+            lr_started = lr.started_at.strftime("%Y-%m-%d %H:%M:%S")
+            lr_found = str(lr.gigs_found)
+            lr_new = str(lr.gigs_new)
+            lr_err = (
+                f"[red]{len(lr.errors_json)} errs[/red]"
+                if lr.errors_json
+                else "[green]None[/green]"
+            )
+        else:
+            lr_started = "-"
+            lr_found = "-"
+            lr_new = "-"
+            lr_err = "-"
+
+        plat_table.add_row(p_name, gig_count, status, lr_started, lr_found, lr_new, lr_err)
+
+    console.print(plat_table)
+    console.print()
+
+
+# ------------------------------------------------------------------------------
+# Scheduler Command: gigradar run [--once]
+# ------------------------------------------------------------------------------
+@app.command(name="run")
+def run_cmd(
+    once: bool = typer.Option(
+        False,
+        "--once",
+        help="Run a single polling tick across all enabled platforms and exit.",
+    ),
+) -> None:
+    """Run the GigRadar background scheduler or execute a single tick (--once)."""
+    import asyncio
+
+    from gigradar.pipeline.scheduler import SchedulerRunner
+
+    settings = get_settings()
+    setup_logging(log_level=settings.log_level, log_format=settings.log_format)
+
+    runner = SchedulerRunner()
+
+    if once:
+        console.print(
+            "\n[bold cyan]Executing single polling tick for all enabled platforms...[/bold cyan]\n"
+        )
+        try:
+            results = asyncio.run(runner.run_once())
+        except Exception as exc:
+            console.print(f"[bold red]Tick execution failed:[/bold red] {exc}")
+            raise typer.Exit(code=1) from None
+
+        table = Table(title="Polling Tick Summary", show_header=True, header_style="bold magenta")
+        table.add_column("Platform", style="cyan")
+        table.add_column("Status", style="bold")
+        table.add_column("Found", justify="right")
+        table.add_column("New Gigs", justify="right")
+        table.add_column("Details")
+
+        for plat, res in results.items():
+            if res.paused:
+                status_str = "[yellow]PAUSED[/yellow]"
+                details_text = res.error or "In cooldown"
+            elif res.success:
+                status_str = "[green]SUCCESS[/green]"
+                details_text = "Completed normally"
+            else:
+                status_str = "[red]FAILED[/red]"
+                details_text = res.error or "Error during tick"
+
+            table.add_row(plat, status_str, str(res.gigs_found), str(res.gigs_new), details_text)
+
+        console.print(table)
+        console.print()
+        return
+
+    console.print(
+        "\n[bold green]Starting GigRadar scheduler in foreground. Press Ctrl+C to stop.[/bold green]\n"
+    )
+    try:
+        asyncio.run(runner.run_forever())
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Shutdown requested by user (Ctrl+C). Exiting cleanly.[/yellow]\n")
 
 
 if __name__ == "__main__":

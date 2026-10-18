@@ -17,6 +17,7 @@ class GigStub(BaseModel):
     bids_count: int | None = None
     brief_description: str | None = None
     client_name: str | None = None
+    detail_level: Literal["full", "title_only"] = "full"
 
 
 class Gig(BaseModel):
@@ -42,6 +43,7 @@ class Gig(BaseModel):
     tags_raw: list[str] = Field(default_factory=list)
     language: Literal["ar", "en", "mixed"] = "ar"
     project_type: Literal["fixed", "hourly"] = "fixed"
+    detail_level: Literal["full", "title_only"] = "full"
     raw_html_hash: str | None = None
 
 

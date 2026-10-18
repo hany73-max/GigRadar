@@ -6,18 +6,17 @@ This document is the single source of truth for the project's current state, dec
 
 ## Current Status Overview
 
-- **Current Phase:** Phase 1b: Freelancer.com via official API (COMPLETED)
-- **Next Phase:** Phase 2: Storage, dedupe, scheduling
-- **Overall System Health:** Green (All 107 unit tests passing, `ruff` clean, `mypy --strict` clean on 32 source files, 0 warnings, `gigradar doctor` operational, `gigradar scrape-once mostaql`, `khamsat`, and `freelancer` functional)
+- **Current Phase:** Phase 2: Storage, dedupe, scheduling (COMPLETED)
+- **Next Phase:** Phase 3: Rules filter
+- **Overall System Health:** Green (All 121 unit tests passing, `ruff` clean, `mypy` clean on 51 source files, `scripts/check.ps1` passing, `gigradar doctor`, `gigradar db upgrade`, `gigradar db stats`, `gigradar run [--once]` operational)
 
 ---
 
 ## Carry-Forward Notes
 
-- **Phase 2 (Khamsat New-Gig Detection):** Khamsat listings are ordered by last activity, not posting time, so new-gig detection must use `external_id` plus a `posted_at` age check, never an early exit on a known ID.
 - **Phase 3 (Hourly & Fixed Range Thresholds):** The rules filter must compare hourly projects against a separate `min_hourly_rate_usd` (add to config), and use `budget_max_usd` for the minimum-budget check on fixed ranges.
 - **Phase 3 (Freelancer Saturation Strategy):** Freelancer projects fill with bids rapidly, so the rules filter should prefer gigs with few bids and a recent `posted_at`.
-- **Phases 3 & 5 (Khamsat Detail Level):** Add a `detail_level` field (`full | title_only`) to `Gig`, set it to `title_only` for Khamsat, and make the rules filter and the scorer prompt aware that the description is missing.
+- **Phases 3 & 5 (Khamsat Detail Level):** `detail_level` field (`full | title_only`) is now present on `Gig`/`gigs` table; make the rules filter and the scorer prompt aware that the description is missing for Khamsat.
 - **Phase 6 (Pitch Validation):** Replace the vocabulary regex ban with claim-based validation (comparing pitch factual statements against `claims_allowlist.yaml` and retrieved portfolio items via LLM judge, rather than naive regex keyword matching).
 
 ---
@@ -245,4 +244,100 @@ uv run gigradar scrape-once freelancer --limit 5 --all
 
 #### 8. Handoff note
 Phase 1b and all post-live-run fixes are complete. `FreelancerClient` queries the official Freelancer REST API using `PoliteHttpClient` with server-side skill filtering, verified `from_time` freshness filtering, and local deduplication. The pure-function parser normalizes multicurrency budgets to USD via live API exchange rates with dual-currency display formatting, midpoint estimates for fixed projects, and unit-safe handling of hourly rates. All 107 tests pass, linters and strict mypy are green, and `gigradar scrape-once freelancer --limit 5` surfaces fresh live gigs posted within minutes/hours. Ready for **Phase 2** (Storage, dedupe, scheduling).
+
+### Phase 2: Storage, Deduplication, and Scheduling (Completed)
+
+#### 1. What was built
+- **Housekeeping & Configuration:**
+  - `config/platforms.yaml`: Extracted Freelancer skill IDs from code into configurable list, removing Data Processing (ID 36). Preserved IDs: 13 (Python), 292 (Machine Learning), 1601 (Deep Learning), 761 (Data Science), 2833 (NLP), 1558 (Computer Vision), 95 (Web Scraping), 68 (SQL), 334 (Data Mining).
+  - `src/gigradar/core/config_models.py`: Updated `PlatformSettings` with `skill_ids: list[int] = Field(default_factory=list)`.
+  - `src/gigradar/platforms/freelancer/client.py`: Refactored `FreelancerClient` to consume configured `skill_ids`.
+- **Database Infrastructure (SQLAlchemy 2.x async + Alembic):**
+  - `src/gigradar/db/session.py`: Async engine factory supporting SQLite with WAL mode (`busy_timeout=5000`, `foreign_keys=ON`) and PostgreSQL readiness.
+  - `src/gigradar/db/models.py`: Declarative models for `Platform` (scrape state, failure tracking, breaker status), `Gig` (idempotent upsert by `(platform_id, external_id)`, `detail_level`, `processing_state`), `GigSnapshot` (bid count history), and `ScrapeRun` (per-platform audit log). Uses `JSON(none_as_null=True)` for dialect-safe null handling.
+  - `alembic.ini` & `src/gigradar/db/migrations/`: Complete async Alembic migration environment (`0001_initial_schema.py`) supporting clean upgrade and downgrade.
+  - `src/gigradar/db/helpers.py`: Async utilities for programmatic `run_db_upgrade()`, `run_db_downgrade()`, and `check_db_connectivity_and_version()`.
+- **Repositories (Data Access Layer):**
+  - `src/gigradar/db/repositories/platform_repo.py`: `PlatformRepository` for registering platforms, tracking consecutive failures, cooldown tripping, and clearing breakers.
+  - `src/gigradar/db/repositories/gig_repo.py`: `GigRepository` for idempotent upsert, updating `last_seen_at`, recording snapshots only when `bids_count` changes, and querying pending stubs.
+  - `src/gigradar/db/repositories/scrape_run_repo.py`: `ScrapeRunRepository` for logging scrape execution, status, and summary metrics.
+- **Pipeline Orchestration & Resilience:**
+  - `src/gigradar/pipeline/circuit_breaker.py`: Per-platform circuit breaker tracking consecutive failures in DB (`max_consecutive_failures=3`), pausing platform for cooldown (`15m`), auto-recovering on cooldown expiry, and isolating platform failures.
+  - `src/gigradar/pipeline/orchestrator.py`: `PipelineOrchestrator` implementing:
+    - Platform deduplication against database.
+    - Ingestion age limit: `posted_at` older than `max_gig_age_minutes` stored as stub with `processing_state="stale"`, avoiding detail fetch. Unknown `posted_at` treated as fresh.
+    - Detail fetching restricted to new/fresh gigs (`processing_state="new"` -> `"detail_fetched"`).
+    - Khamsat out-of-order listing handling (checks entire listing, never stops early on known ID).
+    - Freelancer `since` threshold calculation: `max(now - max_gig_age_minutes, last_successful_run_time)`.
+    - Crash safety: resumes pending stubs with `processing_state="new"` on subsequent ticks.
+  - `src/gigradar/pipeline/scheduler.py`: `SchedulerRunner` with APScheduler `AsyncIOScheduler`, randomized jitter, `coalesce=True`, `max_instances=1`, graceful shutdown on Ctrl+C (SIGINT/SIGTERM), and `--once` execution mode.
+- **CLI Commands:**
+  - `gigradar db upgrade`: Applies pending Alembic migrations.
+  - `gigradar db stats`: Prints summary tables for platforms, gig processing states, and recent scrape runs.
+  - `gigradar run [--once]`: Runs the scheduler daemon or a single-tick test across all enabled platforms.
+  - `gigradar doctor`: Added database connectivity check and Alembic migration status check (reported as non-fatal warning if migrations are pending).
+- **Test Suite (14 new tests, 121 total):**
+  - `tests/test_migrations.py`: Tests clean upgrade, downgrade, and re-upgrade of schema #1.
+  - `tests/test_repositories.py`: Tests platform upsert, gig idempotent upsert, snapshot creation on bid change, and deduplication.
+  - `tests/test_orchestrator.py`: Tests fresh vs stale age filtering (detail fetch only for fresh), deduplication on second run, Khamsat out-of-order handling, and crash safety stub recovery.
+  - `tests/test_circuit_breaker.py`: Tests breaker tripping after 3 failures with cooldown, and failure isolation between platforms.
+  - `tests/test_cli_db.py`: Tests `gigradar db upgrade`, `gigradar db stats`, and `gigradar doctor` database reporting.
+
+#### 2. How to run / verify it
+```bash
+# 1. Run all code quality & test checks:
+powershell -ExecutionPolicy Bypass -File scripts/check.ps1
+# or individually:
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy src tests
+uv run pytest
+
+# 2. Check system diagnostics (database connection and migration status):
+uv run gigradar doctor
+
+# 3. Apply database migrations to create tables:
+uv run gigradar db upgrade
+
+# 4. View database statistics:
+uv run gigradar db stats
+
+# 5. Run a 10-minute live soak test (Ctrl+C to stop cleanly):
+uv run gigradar run
+
+# 6. Or run a single scrape cycle across all platforms:
+uv run gigradar run --once
+```
+
+#### 3. Test results
+- **Pytest:** 121 passed, 1 warning (SQLAlchemy test connection cleanup warning) in 8.75s.
+- **Ruff:** All checks passed (0 lint issues, 57 files formatted).
+- **Mypy:** Success: no issues found in 51 source files.
+- **Verification Script (`scripts/check.ps1`):** All checks passed successfully.
+
+#### 4. Decisions made and why
+- **Freelancer Skill IDs in Config:** Moved skill IDs out of `client.py` into `config/platforms.yaml` and removed ID 36 (Data Processing) to eliminate irrelevant data-entry gigs.
+- **Platform Max Gig Age Limits:**
+  - Freelancer: 360 minutes (6 hours) configured directly in `config/platforms.yaml`.
+  - Mostaql: 1440 minutes (24 hours) inherited from default `rules.yaml`.
+  - Khamsat: 1440 minutes (24 hours) inherited from default `rules.yaml`.
+- **Ingestion Age Limit Mechanics:** If a new gig's `posted_at` is older than `max_gig_age_minutes`, it is inserted as a stub with `processing_state="stale"` and its detail page is NOT fetched, saving network bandwidth and rate limits. Unknown `posted_at` is treated as fresh.
+- **Dialect-Safe JSON Serialization:** Standard SQLAlchemy `JSON` serializes Python `None` as the literal text `"null"`, which causes SQLite `IS NULL` filters to fail. Configured all JSON columns with `JSON(none_as_null=True)` to ensure real SQL `NULL` values.
+- **Crash Safety Recovery:** If the application process crashes midway through fetching details, the gig stubs remain in DB with `processing_state="new"`. On the next tick, the orchestrator queries all stubs in `"new"` state and finishes fetching their details before querying platform listings.
+- **Khamsat Non-Breaking Pagination:** Khamsat listings are sorted by activity, so pagination cannot terminate upon encountering a previously seen gig ID. The orchestrator inspects all fetched items on the listing page.
+- **Doctor Command Migration Non-Fatal:** Treated pending migrations in `gigradar doctor` as a yellow diagnostic warning rather than a fatal exit code 1, allowing doctors to inform users cleanly before `gigradar db upgrade` is executed.
+
+#### 5. Known issues / risks
+- None. System is fully operational and green.
+
+#### 6. Questions for owner
+- None at this stage. All requirements and amendments for Phase 2 are implemented and tested.
+
+#### 7. Proposed next phase and inputs needed
+- **Phase 3: Rules-based pre-filter (section 6.2 of Master Prompt)**
+- *Inputs needed:* Confirmation of `min_hourly_rate_usd` default (suggested $25/hr) to add to `rules.yaml` alongside fixed budget threshold.
+
+#### 8. Handoff note
+Phase 2 storage, deduplication, and scheduling are complete. The async SQLite/PostgreSQL schema, Alembic migrations, repositories, pipeline orchestrator with age-limit stubbing (`stale`), circuit breaker with failure isolation, APScheduler runner with jitter, and Typer CLI commands (`db upgrade`, `db stats`, `run [--once]`) are fully tested across 121 tests. Ready for **Phase 3** (Rules-based pre-filter).
+
 

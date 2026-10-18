@@ -87,6 +87,7 @@ def parse_khamsat_listing(html: str, base_url: str = "https://khamsat.com") -> l
                 bids_count=None,
                 brief_description=title,
                 client_name=client_name,
+                detail_level="title_only",
             )
         )
 
@@ -120,5 +121,6 @@ def parse_khamsat_gig_from_stub(stub: GigStub, raw_html: str | None = None) -> G
         category_raw="طلبات الخدمات غير الموجودة",
         tags_raw=[],
         language=detect_language(stub.title),
+        detail_level="title_only",
         raw_html_hash=raw_hash,
     )

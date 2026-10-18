@@ -108,6 +108,9 @@ class PlatformSettings(BaseModel):
     timeout_seconds: int = 30
     user_agent: str = "GigRadar/0.1.0"
     max_bid_length_chars: int | None = None
+    skill_ids: list[int] | None = None
+    circuit_breaker_failures: int = 3
+    circuit_breaker_cooldown_minutes: int = 15
     thresholds: PlatformThresholds = Field(default_factory=PlatformThresholds)
 
 

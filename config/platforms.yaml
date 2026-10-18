@@ -46,7 +46,18 @@ platforms:
     timeout_seconds: 30
     user_agent: "GigRadar/0.1.0"
     max_bid_length_chars: 1500
+    skill_ids:
+      - 13    # Python
+      - 292   # Machine Learning
+      - 1601  # Deep Learning
+      - 761   # Data Science
+      - 2833  # NLP
+      - 1558  # Computer Vision
+      - 95    # Web Scraping
+      - 68    # SQL
+      - 334   # Data Mining
     thresholds:
       max_existing_bids: 40
       min_budget_usd: 30.0
       max_gig_age_minutes: 360
+
