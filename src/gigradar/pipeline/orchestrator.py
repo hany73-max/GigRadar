@@ -1,5 +1,6 @@
 """Orchestrator pipeline executing single platform polling ticks with deduplication and crash recovery."""
 
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -136,210 +137,254 @@ class PlatformOrchestrator:
         scrape_run = await scrape_run_repo.start_run(platform.id, started_at=start_time)
         await session.commit()
 
-        max_age_minutes = get_platform_max_age_minutes(platform_name)
-
-        # 4. Determine `since` parameter
-        since: datetime | None = None
-        if platform_name == "freelancer":
-            max_age_cutoff = start_time - timedelta(minutes=max_age_minutes)
-            last_successful = await scrape_run_repo.get_last_successful_run(platform.id)
-            if last_successful is not None and last_successful.started_at is not None:
-                since = max(max_age_cutoff, last_successful.started_at)
-            else:
-                since = max_age_cutoff
-
-        # 5. List stubs from client (network call - no open write transaction!)
         errors: list[dict[str, Any]] = []
         stubs: list[GigStub] = []
-        listing_failed = False
+        gigs_new = 0
+
         try:
-            stubs = await platform_client.list_new_gigs(since=since)
+            max_age_minutes = get_platform_max_age_minutes(platform_name)
+
+            # 4. Determine `since` parameter
+            since: datetime | None = None
+            if platform_name == "freelancer":
+                max_age_cutoff = start_time - timedelta(minutes=max_age_minutes)
+                last_successful = await scrape_run_repo.get_last_successful_run(platform.id)
+                if last_successful is not None and last_successful.started_at is not None:
+                    since = max(max_age_cutoff, last_successful.started_at)
+                else:
+                    since = max_age_cutoff
+
+            # 5. List stubs from client (network call - no open write transaction!)
+            listing_failed = False
+            try:
+                stubs = await platform_client.list_new_gigs(since=since)
+            except Exception as exc:
+                listing_failed = True
+                err_msg = f"Failed listing gigs from {platform_name}: {exc}"
+                logger.error("tick_list_failed", platform=platform_name, error=str(exc))
+                errors.append(
+                    {
+                        "stage": "list",
+                        "error": str(exc),
+                        "platform_failure": True,
+                        "timestamp": utc_now().isoformat(),
+                    }
+                )
+                await scrape_run_repo.finish_run(
+                    scrape_run.id,
+                    finished_at=utc_now(),
+                    gigs_found=0,
+                    gigs_new=0,
+                    errors=errors,
+                )
+                await self.circuit_breaker.record_failure(
+                    platform_repo, scrape_run_repo, platform.id, err_msg
+                )
+                await session.commit()
+                return TickResult(
+                    platform=platform_name,
+                    gigs_found=0,
+                    gigs_new=0,
+                    success=False,
+                    error=err_msg,
+                )
+
+            # 6. Dedupe against DB and determine fresh vs stale
+            stub_lookup: dict[str, GigStub] = {}
+
+            for stub in stubs:
+                stub_lookup[stub.external_id] = stub
+
+                # Age evaluation
+                is_stale = False
+                if stub.posted_at is not None:
+                    posted_utc = stub.posted_at.astimezone(UTC)
+                    age_minutes = (start_time - posted_utc).total_seconds() / 60.0
+                    if age_minutes > max_age_minutes:
+                        is_stale = True
+
+                # Check if gig already exists in DB
+                existing = await gig_repo.get_by_external_id(platform.id, stub.external_id)
+                if existing is not None:
+                    # Idempotent touch: updates last_seen_at and snapshots if bids changed
+                    await gig_repo.upsert_stub(platform.id, stub)
+                else:
+                    # Brand new gig
+                    target_state = "stale" if is_stale else "new"
+                    await gig_repo.upsert_stub(platform.id, stub, processing_state=target_state)
+                    gigs_new += 1
+
+            # Commit after the batch of stub upserts for a listing!
+            await session.commit()
+
+            # 7. Detail fetching & crash recovery: pick up incomplete gigs (processing_state == 'new')
+            incomplete_gigs = await gig_repo.get_incomplete_gigs(platform.id)
+
+            detail_attempts_in_tick = 0
+            detail_failures_in_tick = 0
+
+            for inc_gig in incomplete_gigs:
+                # Check age limit on leftover 'new' gigs before fetching details
+                if inc_gig.posted_at is not None:
+                    posted_utc = inc_gig.posted_at.astimezone(UTC)
+                    age_min = (utc_now() - posted_utc).total_seconds() / 60.0
+                    if age_min > max_age_minutes:
+                        logger.info(
+                            "leftover_gig_marked_stale",
+                            platform=platform_name,
+                            external_id=inc_gig.external_id,
+                            age_minutes=age_min,
+                        )
+                        await gig_repo.mark_stale(inc_gig.id)
+                        await session.commit()
+                        continue
+
+                if platform_name == "khamsat":
+                    # Khamsat listing stub provides all available data; transition to detail_fetched
+                    await gig_repo.mark_detail_fetched(inc_gig.id)
+                    await session.commit()
+                    continue
+
+                # Need to fetch details for Mostaql / Freelancer
+                detail_attempts_in_tick += 1
+                try:
+                    # Retrieve or synthesize stub for detail fetch
+                    stub_for_fetch = stub_lookup.get(inc_gig.external_id)
+                    if stub_for_fetch is None:
+                        stub_for_fetch = GigStub(
+                            platform_id=platform_name,
+                            external_id=inc_gig.external_id,
+                            url=inc_gig.url,
+                            title=inc_gig.title,
+                            posted_at=inc_gig.posted_at,
+                            bids_count=inc_gig.bids_count,
+                            brief_description=inc_gig.description,
+                            client_name=inc_gig.client_name,
+                            detail_level=inc_gig.detail_level,  # type: ignore[arg-type]
+                        )
+
+                    # Network call without open write transaction
+                    detail = await platform_client.fetch_gig_detail(stub_for_fetch)
+                    await gig_repo.update_gig_detail(inc_gig.id, detail)
+                    # Commit after EACH gig detail update!
+                    await session.commit()
+                except Exception as exc:
+                    detail_failures_in_tick += 1
+                    logger.warning(
+                        "tick_detail_fetch_failed",
+                        platform=platform_name,
+                        external_id=inc_gig.external_id,
+                        error=str(exc),
+                    )
+                    errors.append(
+                        {
+                            "stage": "detail",
+                            "external_id": inc_gig.external_id,
+                            "error": str(exc),
+                            "platform_failure": False,
+                            "timestamp": utc_now().isoformat(),
+                        }
+                    )
+                    # Failure policy: increment attempts, mark detail_failed if max attempts reached
+                    await gig_repo.record_detail_failure(
+                        inc_gig.id, max_attempts=self.max_detail_attempts
+                    )
+                    # Commit after recording detail failure!
+                    await session.commit()
+
+            # 8. Determine platform failure per failure policy:
+            # A failed detail does NOT count as a platform failure;
+            # circuit breaker only records a failure when listing fails,
+            # or when at least 2 detail fetches were attempted in the tick and ALL failed.
+            is_platform_failure = listing_failed or (
+                detail_attempts_in_tick >= 2 and detail_failures_in_tick == detail_attempts_in_tick
+            )
+            if is_platform_failure:
+                for err in errors:
+                    err["platform_failure"] = True
+
+            # Complete scrape_runs record
+            finish_time = utc_now()
+            await scrape_run_repo.finish_run(
+                scrape_run.id,
+                finished_at=finish_time,
+                gigs_found=len(stubs),
+                gigs_new=gigs_new,
+                errors=errors if errors else None,
+            )
+
+            # 9. Update Circuit Breaker
+
+            if is_platform_failure:
+                await self.circuit_breaker.record_failure(
+                    platform_repo,
+                    scrape_run_repo,
+                    platform.id,
+                    error_message=f"All {detail_attempts_in_tick} detail fetches failed"
+                    if not listing_failed
+                    else "Listing failed",
+                )
+            else:
+                await self.circuit_breaker.record_success(platform_repo, platform.id)
+
+            # Commit after scrape run finish and circuit breaker updates!
+            await session.commit()
+
+            logger.info(
+                "tick_completed",
+                platform=platform_name,
+                gigs_found=len(stubs),
+                gigs_new=gigs_new,
+                errors_count=len(errors),
+                platform_failure=is_platform_failure,
+            )
+
+            return TickResult(
+                platform=platform_name,
+                gigs_found=len(stubs),
+                gigs_new=gigs_new,
+                success=not is_platform_failure,
+                error=f"{len(errors)} errors" if errors else None,
+            )
+
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            raise
         except Exception as exc:
-            listing_failed = True
-            err_msg = f"Failed listing gigs from {platform_name}: {exc}"
-            logger.error("tick_list_failed", platform=platform_name, error=str(exc))
+            err_msg = f"Unexpected error in tick for {platform_name}: {exc}"
+            logger.error("tick_unexpected_error", platform=platform_name, error=str(exc))
             errors.append(
                 {
-                    "stage": "list",
+                    "stage": "unexpected",
                     "error": str(exc),
                     "platform_failure": True,
                     "timestamp": utc_now().isoformat(),
                 }
             )
-            await scrape_run_repo.finish_run(
-                scrape_run.id,
-                finished_at=utc_now(),
-                gigs_found=0,
-                gigs_new=0,
-                errors=errors,
-            )
-            await self.circuit_breaker.record_failure(
-                platform_repo, scrape_run_repo, platform.id, err_msg
-            )
-            await session.commit()
+            try:
+                await session.rollback()
+                await scrape_run_repo.finish_run(
+                    scrape_run.id,
+                    finished_at=utc_now(),
+                    gigs_found=len(stubs),
+                    gigs_new=gigs_new,
+                    errors=errors,
+                )
+                await self.circuit_breaker.record_failure(
+                    platform_repo, scrape_run_repo, platform.id, err_msg
+                )
+                await session.commit()
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                raise
+            except Exception as cleanup_exc:
+                logger.error(
+                    "tick_cleanup_failed",
+                    platform=platform_name,
+                    error=str(cleanup_exc),
+                )
             return TickResult(
                 platform=platform_name,
-                gigs_found=0,
-                gigs_new=0,
+                gigs_found=len(stubs),
+                gigs_new=gigs_new,
                 success=False,
                 error=err_msg,
             )
-
-        # 6. Dedupe against DB and determine fresh vs stale
-        gigs_new = 0
-        stub_lookup: dict[str, GigStub] = {}
-
-        for stub in stubs:
-            stub_lookup[stub.external_id] = stub
-
-            # Age evaluation
-            is_stale = False
-            if stub.posted_at is not None:
-                posted_utc = stub.posted_at.astimezone(UTC)
-                age_minutes = (start_time - posted_utc).total_seconds() / 60.0
-                if age_minutes > max_age_minutes:
-                    is_stale = True
-
-            # Check if gig already exists in DB
-            existing = await gig_repo.get_by_external_id(platform.id, stub.external_id)
-            if existing is not None:
-                # Idempotent touch: updates last_seen_at and snapshots if bids changed
-                await gig_repo.upsert_stub(platform.id, stub)
-            else:
-                # Brand new gig
-                target_state = "stale" if is_stale else "new"
-                await gig_repo.upsert_stub(platform.id, stub, processing_state=target_state)
-                gigs_new += 1
-
-        # Commit after the batch of stub upserts for a listing!
-        await session.commit()
-
-        # 7. Detail fetching & crash recovery: pick up incomplete gigs (processing_state == 'new')
-        incomplete_gigs = await gig_repo.get_incomplete_gigs(platform.id)
-
-        detail_attempts_in_tick = 0
-        detail_failures_in_tick = 0
-
-        for inc_gig in incomplete_gigs:
-            # Check age limit on leftover 'new' gigs before fetching details
-            if inc_gig.posted_at is not None:
-                posted_utc = inc_gig.posted_at.astimezone(UTC)
-                age_min = (utc_now() - posted_utc).total_seconds() / 60.0
-                if age_min > max_age_minutes:
-                    logger.info(
-                        "leftover_gig_marked_stale",
-                        platform=platform_name,
-                        external_id=inc_gig.external_id,
-                        age_minutes=age_min,
-                    )
-                    await gig_repo.mark_stale(inc_gig.id)
-                    await session.commit()
-                    continue
-
-            if platform_name == "khamsat":
-                # Khamsat listing stub provides all available data; transition to detail_fetched
-                await gig_repo.mark_detail_fetched(inc_gig.id)
-                await session.commit()
-                continue
-
-            # Need to fetch details for Mostaql / Freelancer
-            detail_attempts_in_tick += 1
-            try:
-                # Retrieve or synthesize stub for detail fetch
-                stub_for_fetch = stub_lookup.get(inc_gig.external_id)
-                if stub_for_fetch is None:
-                    stub_for_fetch = GigStub(
-                        platform_id=platform_name,
-                        external_id=inc_gig.external_id,
-                        url=inc_gig.url,
-                        title=inc_gig.title,
-                        posted_at=inc_gig.posted_at,
-                        bids_count=inc_gig.bids_count,
-                        brief_description=inc_gig.description,
-                        client_name=inc_gig.client_name,
-                        detail_level=inc_gig.detail_level,  # type: ignore[arg-type]
-                    )
-
-                # Network call without open write transaction
-                detail = await platform_client.fetch_gig_detail(stub_for_fetch)
-                await gig_repo.update_gig_detail(inc_gig.id, detail)
-                # Commit after EACH gig detail update!
-                await session.commit()
-            except Exception as exc:
-                detail_failures_in_tick += 1
-                logger.warning(
-                    "tick_detail_fetch_failed",
-                    platform=platform_name,
-                    external_id=inc_gig.external_id,
-                    error=str(exc),
-                )
-                errors.append(
-                    {
-                        "stage": "detail",
-                        "external_id": inc_gig.external_id,
-                        "error": str(exc),
-                        "platform_failure": False,
-                        "timestamp": utc_now().isoformat(),
-                    }
-                )
-                # Failure policy: increment attempts, mark detail_failed if max attempts reached
-                await gig_repo.record_detail_failure(
-                    inc_gig.id, max_attempts=self.max_detail_attempts
-                )
-                # Commit after recording detail failure!
-                await session.commit()
-
-        # 8. Determine platform failure per failure policy:
-        # A failed detail does NOT count as a platform failure;
-        # circuit breaker only records a failure when listing fails,
-        # or when at least 2 detail fetches were attempted in the tick and ALL failed.
-        is_platform_failure = listing_failed or (
-            detail_attempts_in_tick >= 2 and detail_failures_in_tick == detail_attempts_in_tick
-        )
-        if is_platform_failure:
-            for err in errors:
-                err["platform_failure"] = True
-
-        # Complete scrape_runs record
-        finish_time = utc_now()
-        await scrape_run_repo.finish_run(
-            scrape_run.id,
-            finished_at=finish_time,
-            gigs_found=len(stubs),
-            gigs_new=gigs_new,
-            errors=errors if errors else None,
-        )
-
-        # 9. Update Circuit Breaker
-
-        if is_platform_failure:
-            await self.circuit_breaker.record_failure(
-                platform_repo,
-                scrape_run_repo,
-                platform.id,
-                error_message=f"All {detail_attempts_in_tick} detail fetches failed"
-                if not listing_failed
-                else "Listing failed",
-            )
-        else:
-            await self.circuit_breaker.record_success(platform_repo, platform.id)
-
-        # Commit after scrape run finish and circuit breaker updates!
-        await session.commit()
-
-        logger.info(
-            "tick_completed",
-            platform=platform_name,
-            gigs_found=len(stubs),
-            gigs_new=gigs_new,
-            errors_count=len(errors),
-            platform_failure=is_platform_failure,
-        )
-
-        return TickResult(
-            platform=platform_name,
-            gigs_found=len(stubs),
-            gigs_new=gigs_new,
-            success=not is_platform_failure,
-            error=f"{len(errors)} errors" if errors else None,
-        )

@@ -6,9 +6,9 @@ This document is the single source of truth for the project's current state, dec
 
 ## Current Status Overview
 
-- **Current Phase:** Phase 2: Storage, dedupe, scheduling (COMPLETED)
+- **Current Phase:** Phase 2: Storage, dedupe, scheduling (COMPLETED with Phase 2 fixes)
 - **Next Phase:** Phase 3: Rules filter
-- **Overall System Health:** Green (All 125 unit tests passing, `ruff` clean, `mypy --strict` clean on 52 source files, 0 warnings with `-W error`, `scripts/check.ps1` passing, `gigradar doctor`, `gigradar db upgrade`, `gigradar db stats`, `gigradar run [--once]` operational)
+- **Overall System Health:** Green (All 130 unit tests passing, `ruff` clean, `mypy --strict` clean on 53 source files, 0 warnings with `-W error`, `scripts/check.ps1` passing, `gigradar doctor`, `gigradar db upgrade`, `gigradar db stats`, `gigradar run [--once]` operational)
 
 ---
 
@@ -345,5 +345,49 @@ uv run gigradar run --once
 
 #### 8. Handoff note
 Phase 2 storage, deduplication, scheduling, and concurrency/transaction fixes are complete. The async SQLite/PostgreSQL schema with migrations #1 and #2, repositories, pipeline orchestrator with short transactions, age-limit stubbing (`stale`), failure policy with `detail_failed`, circuit breaker with failure isolation, APScheduler runner with jitter, and Typer CLI commands (`db upgrade`, `db stats`, `run [--once]`) are fully verified across 125 tests. Ready for **Phase 3** (Rules-based pre-filter).
+
+### Phase 2 Fixes: Timezone Handling, Safe Ticks & Interrupted Run Tracking (Completed)
+
+#### 1. What was built
+- **UTCDateTime TypeDecorator (`src/gigradar/db/models.py`, `src/gigradar/db/__init__.py`):**
+  - Implements custom `UTCDateTime(TypeDecorator[datetime])` wrapping `DateTime(timezone=True)`.
+  - On write: requires/converts any incoming datetime into an aware UTC datetime (naive values treated as UTC).
+  - On read: converts any stored datetime (including SQLite's naive strings) into an aware UTC datetime (`tzinfo=datetime.UTC`), preventing Python from interpreting naive database timestamps as local system time (e.g. UTC+3) when calling `.astimezone(UTC)`.
+  - Applied to every datetime column across all models: `Platform.paused_until`, `Platform.created_at`, `Gig.posted_at`, `Gig.first_seen_at`, `Gig.last_seen_at`, `GigSnapshot.seen_at`, `ScrapeRun.started_at`, `ScrapeRun.finished_at`.
+  - Configured in `Base.type_annotation_map` for `datetime`. Compatible with SQLite and PostgreSQL without needing schema data migrations.
+- **Fail-Safe Tick Execution (`src/gigradar/pipeline/orchestrator.py`):**
+  - Wrapped all execution in `_execute_tick` following `scrape_run` initialization inside a `try/except Exception` block.
+  - On any unexpected exception: cleanly marks `scrape_run` finished with error details recorded in `errors_json`, records a failure in the circuit breaker, commits transaction, and returns a failed `TickResult` (never leaving orphaned unfinished runs in DB).
+  - Propagates `asyncio.CancelledError` and `KeyboardInterrupt` without interference.
+- **Startup Interrupted Run Cleanup (`src/gigradar/pipeline/scheduler.py`, `src/gigradar/db/repositories/scrape_run_repo.py`):**
+  - Added `mark_interrupted_runs()` on `ScrapeRunRepository` and `cleanup_interrupted_runs()` on `SchedulerRunner`.
+  - Automatically executed on `gigradar run` startup (`run_once()` and `run_forever()`): finds any `scrape_runs` where `finished_at IS NULL` and marks them finished with `errors_json` explaining that the run was interrupted (preventing them from looking healthy or being picked up by `get_last_successful_run`).
+- **Enhanced Database Diagnostics (`src/gigradar/cli.py`, `src/gigradar/db/repositories/scrape_run_repo.py`):**
+  - Added `get_last_finished_run()`, `count_failed_or_interrupted_runs_24h()`, and `get_latest_error_message()` on `ScrapeRunRepository`.
+  - `gigradar db stats` updated to show per platform:
+    - Last FINISHED run (timestamp, found, new, error count).
+    - Count of failed or interrupted runs within the last 24 hours.
+    - Last error message printed in table and displayed in full detail.
+- **Regression Tests (`tests/test_phase2_fixes.py`):**
+  - 5 comprehensive tests running on file-based SQLite in `tmp_path`:
+    1. `test_freelancer_tick_after_previous_successful_run`: Verifies Freelancer second tick succeeds without naive vs aware datetime comparison error (`max(cutoff_aware, last_successful.started_at)`).
+    2. `test_all_models_datetimes_are_aware_utc`: Verifies datetimes loaded from DB have `tzinfo == UTC` across all 4 models (`Platform`, `Gig`, `GigSnapshot`, `ScrapeRun`) and preserves wall time on `.astimezone(UTC)`.
+    3. `test_unexpected_exception_finishes_run_and_trips_breaker`: Verifies unexpected tick exceptions mark the run finished, record error, and trip the breaker after N ticks.
+    4. `test_interrupted_run_marking_at_startup`: Verifies startup marks unfinished runs as interrupted and excludes them from `get_last_successful_run`.
+    5. `test_cli_db_stats_with_finished_and_failed_runs`: Verifies `gigradar db stats` outputs last finished run, 24h failure count, and last error message.
+
+#### 2. Test results
+- **Pytest:** 130 passed, 0 warnings (with `-W error`) in 68.36s.
+- **Ruff:** All checks passed (0 lint issues, 59 files formatted).
+- **Mypy:** Success: no issues found in 53 source files (`--strict` mode).
+
+#### 3. Decisions made and why
+- **UTCDateTime TypeDecorator:** SQLite returns naive strings that python's datetime parser turns into naive datetimes without tzinfo. By wrapping with `UTCDateTime`, both SQLite and PostgreSQL consistently return `datetime(..., tzinfo=datetime.UTC)`. This eliminates `TypeError: can't compare offset-naive and offset-aware datetimes` in `max(cutoff_aware, last_successful.started_at)` and prevents `.astimezone(UTC)` from shifting naive timestamps by system local offset.
+- **Outer Tick Guard:** Mid-tick network or DB errors previously left `scrape_runs` rows with `finished_at NULL` and bypassed circuit breaker failure tracking. Wrapping after run start guarantees state cleanup and circuit breaker accounting.
+- **Graceful Startup Recovery:** Marking orphaned runs on startup ensures clean audit trails without manual DB surgery after process crashes or restarts.
+
+#### 4. Handoff note
+Phase 2 fixes are complete and verified. The codebase is clean, typed (`mypy --strict`), formatted, and backed by 130 passing tests with `-W error`. Ready for **Phase 3** (Rules-based pre-filter).
+
 
 

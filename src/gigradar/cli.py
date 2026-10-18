@@ -452,14 +452,18 @@ def db_stats() -> None:
                 platforms = await platform_repo.list_all()
                 details: list[dict[str, Any]] = []
                 for plat in platforms:
-                    last_run = await scrape_run_repo.get_last_run(plat.id)
+                    last_finished = await scrape_run_repo.get_last_finished_run(plat.id)
+                    failed_24h = await scrape_run_repo.count_failed_or_interrupted_runs_24h(plat.id)
+                    last_error_msg = await scrape_run_repo.get_latest_error_message(plat.id)
                     details.append(
                         {
                             "name": plat.name,
                             "is_paused": plat.is_paused,
                             "paused_until": plat.paused_until,
                             "pause_reason": plat.pause_reason,
-                            "last_run": last_run,
+                            "last_finished_run": last_finished,
+                            "failed_24h": failed_24h,
+                            "last_error": last_error_msg,
                         }
                     )
                 return stats, details
@@ -490,10 +494,12 @@ def db_stats() -> None:
     plat_table.add_column("Platform", style="cyan")
     plat_table.add_column("Stored Gigs", justify="right")
     plat_table.add_column("Status", style="bold")
-    plat_table.add_column("Last Run Started (UTC)")
+    plat_table.add_column("Last Finished (UTC)")
     plat_table.add_column("Last Found", justify="right")
     plat_table.add_column("Last New", justify="right")
     plat_table.add_column("Errors")
+    plat_table.add_column("Failed (24h)", justify="right")
+    plat_table.add_column("Last Error", max_width=40, overflow="fold")
 
     by_plat = stats.get("by_platform", {})
     for item in details:
@@ -503,9 +509,9 @@ def db_stats() -> None:
         if item["is_paused"] and item["paused_until"]:
             status += f" (until {item['paused_until'].strftime('%H:%M:%S')})"
 
-        lr = item["last_run"]
+        lr = item["last_finished_run"]
         if lr:
-            lr_started = lr.started_at.strftime("%Y-%m-%d %H:%M:%S")
+            lr_finished = lr.finished_at.strftime("%Y-%m-%d %H:%M:%S") if lr.finished_at else "-"
             lr_found = str(lr.gigs_found)
             lr_new = str(lr.gigs_new)
             lr_err = (
@@ -514,15 +520,39 @@ def db_stats() -> None:
                 else "[green]None[/green]"
             )
         else:
-            lr_started = "-"
+            lr_finished = "-"
             lr_found = "-"
             lr_new = "-"
             lr_err = "-"
 
-        plat_table.add_row(p_name, gig_count, status, lr_started, lr_found, lr_new, lr_err)
+        failed_24h_str = (
+            f"[red]{item['failed_24h']}[/red]" if item["failed_24h"] > 0 else "[green]0[/green]"
+        )
+        last_error_str = (
+            f"[red]{item['last_error']}[/red]" if item.get("last_error") else "[green]None[/green]"
+        )
+
+        plat_table.add_row(
+            p_name,
+            gig_count,
+            status,
+            lr_finished,
+            lr_found,
+            lr_new,
+            lr_err,
+            failed_24h_str,
+            last_error_str,
+        )
 
     console.print(plat_table)
     console.print()
+
+    platforms_with_errors = [item for item in details if item.get("last_error")]
+    if platforms_with_errors:
+        console.print("[bold yellow]Last Platform Errors:[/bold yellow]")
+        for item in platforms_with_errors:
+            console.print(f"  • [cyan]{item['name']}[/cyan]: [red]{item['last_error']}[/red]")
+        console.print()
 
 
 # ------------------------------------------------------------------------------

@@ -5,7 +5,6 @@ from typing import Any
 
 from sqlalchemy import (
     Boolean,
-    DateTime,
     Float,
     ForeignKey,
     Integer,
@@ -13,8 +12,41 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy.types import JSON
+from sqlalchemy.types import JSON, DateTime, TypeDecorator
+
+
+class UTCDateTime(TypeDecorator[datetime]):
+    """SQLAlchemy TypeDecorator that enforces timezone-aware UTC datetimes.
+
+    Under SQLite, datetime columns return naive datetimes without tzinfo.
+    Under PostgreSQL, datetime columns return aware datetimes (TIMESTAMPTZ).
+    This decorator guarantees that:
+    1. On write: naive datetimes are assumed to be UTC; aware datetimes are
+       converted to UTC.
+    2. On read: naive datetimes (e.g. from SQLite) are assigned UTC tzinfo;
+       aware datetimes are converted to UTC.
+    """
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect: Dialect) -> datetime | None:
+        if value is None:
+            return None
+        if not isinstance(value, datetime):
+            raise TypeError(f"Expected datetime, got {type(value).__name__}: {value!r}")
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
+    def process_result_value(self, value: datetime | None, dialect: Dialect) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
 
 class Base(DeclarativeBase):
@@ -25,6 +57,7 @@ class Base(DeclarativeBase):
         dict[str, Any]: JSON(none_as_null=True),
         list[str]: JSON(none_as_null=True),
         list[dict[str, Any]]: JSON(none_as_null=True),
+        datetime: UTCDateTime,
     }
 
 
@@ -42,11 +75,9 @@ class Platform(Base):
     name: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
     base_url: Mapped[str] = mapped_column(String(255), nullable=False)
     is_paused: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    paused_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    paused_until: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     pause_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now
-    )
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utc_now)
 
     # Relationships
     gigs: Mapped[list["Gig"]] = relationship(
@@ -81,9 +112,7 @@ class Gig(Base):
     budget_usd_est: Mapped[float | None] = mapped_column(Float, nullable=True)
     project_type: Mapped[str] = mapped_column(String(20), nullable=False, default="fixed")
     bids_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    posted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True, index=True
-    )
+    posted_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True, index=True)
     deadline_text: Mapped[str | None] = mapped_column(String(100), nullable=True)
     client_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     client_stats_json: Mapped[dict[str, Any] | None] = mapped_column(
@@ -100,11 +129,9 @@ class Gig(Base):
     processing_state: Mapped[str] = mapped_column(
         String(30), nullable=False, default="new", index=True
     )
-    first_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now
-    )
+    first_seen_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utc_now)
     last_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now, index=True
+        UTCDateTime, nullable=False, default=utc_now, index=True
     )
 
     __table_args__ = (
@@ -137,9 +164,7 @@ class GigSnapshot(Base):
         Integer, ForeignKey("gigs.id", ondelete="CASCADE"), nullable=False, index=True
     )
     bids_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now
-    )
+    seen_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utc_now)
 
     # Relationships
     gig: Mapped["Gig"] = relationship("Gig", back_populates="snapshots")
@@ -157,10 +182,8 @@ class ScrapeRun(Base):
     platform_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("platforms.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now
-    )
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utc_now)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     gigs_found: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     gigs_new: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     errors_json: Mapped[list[dict[str, Any]] | None] = mapped_column(

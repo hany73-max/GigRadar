@@ -21,8 +21,22 @@ class SchedulerRunner:
         self.scheduler = AsyncIOScheduler()
         self._is_running = False
 
+    async def cleanup_interrupted_runs(self) -> int:
+        """Mark any unfinished scrape_runs as interrupted on scheduler startup."""
+        from gigradar.db.repositories.scrape_run_repo import ScrapeRunRepository
+        from gigradar.db.session import get_async_session
+
+        async with get_async_session(engine=self.orchestrator.engine) as session:
+            repo = ScrapeRunRepository(session)
+            count = await repo.mark_interrupted_runs()
+            if count > 0:
+                await session.commit()
+                logger.warning("interrupted_runs_marked_on_startup", count=count)
+            return count
+
     async def run_once(self) -> dict[str, TickResult]:
         """Execute a single polling tick across all enabled platforms sequentially and return results."""
+        await self.cleanup_interrupted_runs()
         platforms_cfg = load_platforms_config()
         results: dict[str, TickResult] = {}
 
@@ -84,6 +98,7 @@ class SchedulerRunner:
 
     async def run_forever(self, shutdown_event: asyncio.Event | None = None) -> None:
         """Run the scheduler in the foreground until shutdown_event is set or cancelled."""
+        await self.cleanup_interrupted_runs()
         self.setup_jobs()
         self.scheduler.start()
         self._is_running = True

@@ -1,6 +1,6 @@
 """Scrape run repository for tracking scraping and polling ticks."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import desc, or_, select
@@ -54,11 +54,54 @@ class ScrapeRunRepository:
         await self.session.flush()
         return run
 
+    async def mark_interrupted_runs(self) -> int:
+        """Mark any unfinished scrape_runs (finished_at IS NULL) as interrupted.
+
+        Returns the number of runs marked.
+        """
+        result = await self.session.execute(
+            select(ScrapeRun).where(ScrapeRun.finished_at.is_(None))
+        )
+        unfinished_runs = list(result.scalars().all())
+        if not unfinished_runs:
+            return 0
+
+        now = utc_now()
+        for run in unfinished_runs:
+            run.finished_at = now
+            existing_errors = list(run.errors_json or [])
+            existing_errors.append(
+                {
+                    "stage": "interrupted",
+                    "error": "Run was interrupted before tick completion (e.g. process termination)",
+                    "interrupted": True,
+                    "platform_failure": True,
+                    "timestamp": now.isoformat(),
+                }
+            )
+            run.errors_json = existing_errors
+
+        await self.session.flush()
+        return len(unfinished_runs)
+
     async def get_last_run(self, platform_id: int) -> ScrapeRun | None:
         """Retrieve the most recent run for a platform."""
         result = await self.session.execute(
             select(ScrapeRun)
             .where(ScrapeRun.platform_id == platform_id)
+            .order_by(desc(ScrapeRun.started_at))
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_last_finished_run(self, platform_id: int) -> ScrapeRun | None:
+        """Retrieve the most recent finished run for a platform."""
+        result = await self.session.execute(
+            select(ScrapeRun)
+            .where(
+                ScrapeRun.platform_id == platform_id,
+                ScrapeRun.finished_at.is_not(None),
+            )
             .order_by(desc(ScrapeRun.started_at))
             .limit(1)
         )
@@ -100,3 +143,44 @@ class ScrapeRunRepository:
             else:
                 break
         return consecutive
+
+    async def count_failed_or_interrupted_runs_24h(
+        self, platform_id: int, since: datetime | None = None
+    ) -> int:
+        """Count runs started in the last 24 hours that either failed (had errors) or were interrupted."""
+        cutoff = since or (utc_now() - timedelta(hours=24))
+        result = await self.session.execute(
+            select(ScrapeRun).where(
+                ScrapeRun.platform_id == platform_id,
+                ScrapeRun.started_at >= cutoff,
+            )
+        )
+        runs = list(result.scalars().all())
+        count = 0
+        for run in runs:
+            if run.finished_at is None:
+                count += 1
+            elif run.errors_json and len(run.errors_json) > 0:
+                count += 1
+        return count
+
+    async def get_latest_error_message(self, platform_id: int) -> str | None:
+        """Retrieve the most recent error message from any run for this platform."""
+        result = await self.session.execute(
+            select(ScrapeRun)
+            .where(
+                ScrapeRun.platform_id == platform_id,
+                ScrapeRun.errors_json.is_not(None),
+            )
+            .order_by(desc(ScrapeRun.started_at))
+            .limit(10)
+        )
+        runs = list(result.scalars().all())
+        for run in runs:
+            if run.errors_json:
+                for err in reversed(run.errors_json):
+                    if isinstance(err, dict) and "error" in err:
+                        return str(err["error"])
+                    elif isinstance(err, str):
+                        return err
+        return None
