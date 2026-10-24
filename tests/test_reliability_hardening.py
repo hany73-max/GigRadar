@@ -1024,3 +1024,21 @@ def test_real_database_file_untouched_by_suite(guard_real_database: Any) -> None
         guard_real_database.size,
         guard_real_database.mtime_ns,
     )
+
+
+def test_outbound_network_blocked_by_pytest_socket() -> None:
+    import socket
+    import warnings
+
+    from pytest_socket import SocketConnectBlockedError
+
+    s = socket.socket()
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            s.connect(("1.1.1.1", 80))
+        pytest.fail("Outbound network socket was not blocked by pytest-socket!")
+    except SocketConnectBlockedError:
+        pass
+    finally:
+        s.close()

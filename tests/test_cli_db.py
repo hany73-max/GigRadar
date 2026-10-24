@@ -35,7 +35,7 @@ def test_cli_doctor_db_check(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv("DATABASE_URL", db_url)
 
     # Doctor before upgrade -> pending
-    res1 = runner.invoke(app, ["doctor", "--skip-live-llm"])
+    res1 = runner.invoke(app, ["doctor", "--offline"])
     assert "Database & Migrations" in res1.stdout
     assert "PENDING" in res1.stdout
 
@@ -44,7 +44,7 @@ def test_cli_doctor_db_check(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert res_up.exit_code == 0
 
     # Doctor after upgrade -> up to date
-    res2 = runner.invoke(app, ["doctor", "--skip-live-llm"])
+    res2 = runner.invoke(app, ["doctor", "--offline"])
     assert "UP TO DATE" in res2.stdout
 
 

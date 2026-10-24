@@ -8,7 +8,7 @@ This document is the single source of truth for the project's current state, dec
 
 - **Current Phase:** Phase 2.5a-fix: Test isolation, traceback safety & redaction hardening (COMPLETED)
 - **Next Phase:** Phase 3: Rules filter
-- **Overall System Health:** Green (All 162 unit tests passing in 23.06s with `-W error`, `pipeline/scheduler.py` 99% coverage, `gigradar.db` untouched, `ruff` clean, `mypy --strict` clean on 56 source files, `scripts/check.ps1` passing, `gigradar doctor [--offline]`, `gigradar db upgrade`, `gigradar db stats`, `gigradar run [--once]` operational)
+- **Overall System Health:** Green (All 163 unit tests passing in 18.50s with `-W error`, outbound network blocked via `pytest-socket`, `pipeline/scheduler.py` 99% coverage, `gigradar.db` untouched, `ruff` clean, `mypy --strict` clean on 56 source files, `scripts/check.ps1` passing, `gigradar doctor [--offline]`, `gigradar db upgrade`, `gigradar db stats`, `gigradar run [--once]` operational)
 
 ---
 
@@ -505,10 +505,15 @@ Phase 2.5a reliability hardening is complete and verified. All silent-failure ri
   - Made `stagger_step_seconds` configurable in `setup_jobs()` (default 20.0s, tests set to 0.0s) and patched sleep durations, eliminating real-time waiting.
   - Added test coverage for `cleanup_interrupted_runs()` when active runs exist, `startup_health_checks()` healthy and exception paths, `run_once()` with enabled and disabled platforms, and disabled platform job filtering.
   - Coverage for `src/gigradar/pipeline/scheduler.py` reached **99%** (105 statements, 1 missed).
+- **Outbound Network Blocking in Tests (`pyproject.toml`, `tests/test_cli_db.py`, `tests/test_reliability_hardening.py`):**
+  - Added `pytest-socket>=0.8.0` to dev dependencies and configured `addopts = "--disable-socket --allow-hosts=127.0.0.1,::1,localhost"` in `pyproject.toml`, blocking all outbound socket connections across the test suite by default.
+  - Fixed `test_cli_doctor_db_check` in `tests/test_cli_db.py` to use `--offline` rather than `--skip-live-llm`, preventing live platform HTTP requests during test execution.
+  - Added `test_outbound_network_blocked_by_pytest_socket` explicitly asserting that any attempt to connect to an external host raises `SocketConnectBlockedError` and fails immediately.
+  - Entire suite runs offline in **18.50s**.
 
 #### 2. How to run / verify it
 ```bash
-# 1. Run all tests with strict zero-warning policy:
+# 1. Run all tests with strict zero-warning policy and network blocked:
 uv run pytest -W error
 
 # 2. Measure coverage on scheduler.py:
@@ -522,7 +527,7 @@ uv run mypy src tests
 ```
 
 #### 3. Test results
-- **Pytest:** 162 passed in 23.06s (0 warnings with `-W error`).
+- **Pytest:** 163 passed in 18.50s (0 warnings with `-W error`, 0 network calls allowed).
 - **Scheduler Coverage:** 99% (104 of 105 statements covered).
 - **Database Isolation:** Real `gigradar.db` presence, size, and mtime verified unchanged across the suite.
 - **Ruff:** All checks passed (0 lint issues, 62 files formatted).
@@ -531,6 +536,7 @@ uv run mypy src tests
 #### 4. Decisions made and why
 - **Session Template DB Copy vs Alembic:** Running full Alembic migrations on every test created significant overhead. Generating a single template DB via `Base.metadata.create_all` at session start and performing `shutil.copyfile` for each test reduced test setup time to sub-millisecond per test while providing complete schema isolation.
 - **Safe Literal Redaction Thresholds:** Filtering literal secrets by minimum length ($\ge 8$ chars) and checking `is_placeholder()` ensures placeholder values in development environments never corrupt normal logs or replace empty strings.
+- **Strict Outbound Network Blocking:** Configuring `pytest-socket` at configuration level ensures any future test that makes unmocked HTTP requests to external APIs fails immediately and loudly instead of hanging or relying on live credentials.
 
 #### 5. Known issues / risks
 - None. System is fully operational, clean, and green.
@@ -543,5 +549,5 @@ uv run mypy src tests
 - *Inputs needed:* Owner confirmation to proceed with Phase 3.
 
 #### 8. Handoff note
-Phase 2.5a-fix is complete. The entire suite runs cleanly under 24 seconds with zero warnings, scheduler coverage is 99%, secrets and tracebacks are fully sanitized, and test isolation guarantees the real database is never touched. Ready for Phase 3.
+Phase 2.5a-fix is complete. The entire suite runs completely offline in 18.50 seconds with zero warnings, scheduler coverage is 99%, secrets and tracebacks are fully sanitized, and test isolation guarantees the real database and external networks are never touched. Ready for Phase 3.
 
