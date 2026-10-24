@@ -15,6 +15,62 @@ from tenacity import (
     wait_exponential,
 )
 
+from gigradar.platforms.common.exceptions import BlockedByBotProtection
+
+# Specific phrases for Cloudflare, Captcha, AWS WAF, and maintenance
+BOT_PROTECTION_PHRASES: tuple[str, ...] = (
+    # Cloudflare challenge
+    "just a moment...",
+    "<title>just a moment...</title>",
+    "cf-browser-verification",
+    "cloudflare ray id",
+    "challenges.cloudflare.com",
+    "cf-chl-widget",
+    "cf-chl-bypass",
+    "attention required! | cloudflare",
+    # Captchas & human verification
+    "hcaptcha",
+    "g-recaptcha",
+    "recaptcha/api.js",
+    "cf-turnstile",
+    "security check to access",
+    "please verify you are a human",
+    "awswaf-captcha",
+    "awswaf",
+    # Maintenance
+    "site is currently undergoing maintenance",
+    "down for maintenance",
+    "temporarily unavailable due to maintenance",
+    "scheduled maintenance",
+    "we will be back soon",
+)
+
+
+def detect_html_bot_protection(html: str, platform: str = "", url: str = "") -> None:
+    """Detect bot protection or maintenance challenge pages when listing yields zero rows.
+
+    Should ONLY be invoked when a scraper page returns zero listing rows to avoid
+    false positives on legitimate gig descriptions.
+    """
+    if not html:
+        return
+
+    lower_html = html.lower()
+    for phrase in BOT_PROTECTION_PHRASES:
+        if phrase in lower_html:
+            logger.warning(
+                "bot_protection_detected_in_html",
+                platform=platform,
+                url=url,
+                matched_phrase=phrase,
+            )
+            raise BlockedByBotProtection(
+                f"Platform '{platform}' blocked request or served challenge page at '{url}' (matched '{phrase}')",
+                platform=platform,
+                reason="body_marker",
+            )
+
+
 logger = structlog.get_logger(__name__)
 
 
@@ -146,6 +202,24 @@ class PoliteHttpClient:
                 await self.rate_limiter.wait()
                 logger.debug("polite_http_get", url=url, attempt=attempt.retry_state.attempt_number)
                 response = await self._client.get(url, **kwargs)
+
+                # HTTP 202 or x-amzn-waf-action indicates challenge/bot protection
+                if response.status_code == 202:
+                    logger.warning("http_blocked_status_202", url=url)
+                    raise BlockedByBotProtection(
+                        f"Received HTTP 202 challenge/accepted response from {url}",
+                        status_code=202,
+                        reason="http_202",
+                    )
+
+                waf_action = response.headers.get("x-amzn-waf-action")
+                if waf_action:
+                    logger.warning("http_blocked_amzn_waf", url=url, action=waf_action)
+                    raise BlockedByBotProtection(
+                        f"AWS WAF action '{waf_action}' header received from {url}",
+                        status_code=response.status_code,
+                        reason=f"x-amzn-waf-action:{waf_action}",
+                    )
 
                 # Check if we got 429/503 with Retry-After header
                 if response.status_code in {429, 503}:

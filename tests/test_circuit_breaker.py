@@ -35,9 +35,14 @@ class FailingClient:
     async def health_check(self) -> HealthReport:
         return HealthReport(platform_id=self.name, is_healthy=False, message="Unhealthy")
 
+    async def close(self) -> None:
+        pass
+
 
 class WorkingClient:
     """Mock client that always succeeds."""
+
+    min_expected_listing_rows: int = 0
 
     def __init__(self, name: str) -> None:
         self.name = name
@@ -65,6 +70,9 @@ class WorkingClient:
 
     async def health_check(self) -> HealthReport:
         return HealthReport(platform_id=self.name, is_healthy=True, message="OK")
+
+    async def close(self) -> None:
+        pass
 
 
 @pytest_asyncio.fixture

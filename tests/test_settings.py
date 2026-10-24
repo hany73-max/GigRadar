@@ -1,9 +1,11 @@
-"""Tests for application settings and environment overrides."""
+import pytest
+from pydantic_settings import SettingsConfigDict
 
 from gigradar.core.settings import Settings
 
 
-def test_settings_defaults() -> None:
+def test_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(Settings, "model_config", SettingsConfigDict(extra="ignore"))
     settings = Settings()
     assert settings.llm_model_scorer == "gemini-2.5-flash"
     assert settings.score_threshold == 65

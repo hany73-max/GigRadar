@@ -15,12 +15,14 @@ def test_cli_version() -> None:
     assert "GigRadar version" in result.stdout
 
 
-def test_cli_doctor_skip_llm() -> None:
-    result = runner.invoke(app, ["doctor", "--skip-live-llm"])
+def test_cli_doctor_offline() -> None:
+    result = runner.invoke(app, ["doctor", "--offline"])
     assert result.exit_code == 0
     assert "GigRadar Doctor" in result.stdout
     assert "portfolio.yaml" in result.stdout
     assert "rules.yaml" in result.stdout
+    assert "Platform Health Checks" in result.stdout
+    assert "--offline passed" in result.stdout
 
 
 def test_cli_doctor_detects_placeholders(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -30,7 +32,7 @@ def test_cli_doctor_detects_placeholders(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456789:ABCdefGHIjklMNOpqrsTUVwxyz")
     monkeypatch.setenv("TELEGRAM_ALLOWED_CHAT_ID", "123456789")
 
-    result = runner.invoke(app, ["doctor"])
+    result = runner.invoke(app, ["doctor", "--offline"])
     assert result.exit_code == 0
     assert "PLACEHOLDER" in result.stdout
     assert "Configured" not in result.stdout
@@ -38,6 +40,26 @@ def test_cli_doctor_detects_placeholders(monkeypatch: pytest.MonkeyPatch) -> Non
 
     # Clean up cached settings
     monkeypatch.setattr(settings_module, "_settings", None)
+
+
+def test_cli_doctor_platform_health_checks_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gigradar.core.models import HealthReport
+
+    class MockClient:
+        async def health_check(self) -> HealthReport:
+            return HealthReport(platform_id="mock", is_healthy=True, message="Mocked healthy")
+
+        async def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "gigradar.pipeline.orchestrator.PlatformOrchestrator.get_client",
+        lambda self, name: MockClient(),
+    )
+    result = runner.invoke(app, ["doctor", "--skip-live-llm"])
+    assert result.exit_code == 0
+    assert "Platform Health Checks" in result.stdout
+    assert "Mocked healthy" in result.stdout
 
 
 def test_cli_scrape_once_unsupported_platform() -> None:

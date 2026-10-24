@@ -1,6 +1,8 @@
 """Scheduler runner managing per-platform polling jobs via APScheduler."""
 
 import asyncio
+import random
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler  # type: ignore[import-untyped]
@@ -34,6 +36,48 @@ class SchedulerRunner:
                 logger.warning("interrupted_runs_marked_on_startup", count=count)
             return count
 
+    async def startup_health_checks(self) -> dict[str, bool]:
+        """Perform live health check for each enabled platform at startup.
+
+        Never crashes run. On failure, logs an error and records a platform failure on the circuit breaker.
+        Uses the platform client's own polite client (one live request per platform, no extra fetches).
+        """
+        platforms_cfg = load_platforms_config()
+        health_results: dict[str, bool] = {}
+
+        for name, settings in platforms_cfg.platforms.items():
+            if not settings.enabled:
+                continue
+
+            client = self.orchestrator.get_client(name)
+            try:
+                report = await client.health_check()
+                if report.is_healthy:
+                    logger.info(
+                        "platform_startup_health_check_passed",
+                        platform=name,
+                        message=report.message,
+                    )
+                    health_results[name] = True
+                else:
+                    logger.error(
+                        "platform_startup_health_check_failed",
+                        platform=name,
+                        message=report.message,
+                    )
+                    await self.orchestrator.record_startup_health_failure(name, report.message)
+                    health_results[name] = False
+            except Exception as exc:
+                logger.error(
+                    "platform_startup_health_check_exception",
+                    platform=name,
+                    error=str(exc),
+                )
+                await self.orchestrator.record_startup_health_failure(name, str(exc))
+                health_results[name] = False
+
+        return health_results
+
     async def run_once(self) -> dict[str, TickResult]:
         """Execute a single polling tick across all enabled platforms sequentially and return results."""
         await self.cleanup_interrupted_runs()
@@ -62,8 +106,12 @@ class SchedulerRunner:
         return results
 
     def setup_jobs(self) -> None:
-        """Configure jobs for each enabled platform using platforms.yaml intervals and jitter."""
+        """Configure jobs for each enabled platform with intervals, jitter, and staggered starts."""
         platforms_cfg = load_platforms_config()
+        now = datetime.now(UTC)
+
+        stagger_step_seconds = 20.0
+        idx = 0
 
         for name, settings in platforms_cfg.platforms.items():
             if not settings.enabled:
@@ -71,6 +119,12 @@ class SchedulerRunner:
 
             poll_interval = settings.poll_interval_seconds
             jitter = float(settings.jitter_seconds_max)
+            jitter_min = float(settings.jitter_seconds_min)
+
+            # Stagger initial next_run_time (e.g. 0s, 20s, 40s + jitter) so platforms do not fire simultaneously
+            initial_delay = (idx * stagger_step_seconds) + random.uniform(jitter_min, jitter)
+            initial_next_run = now + timedelta(seconds=initial_delay)
+            idx += 1
 
             # Define per-platform runner function
             async def platform_job(plat_name: str = name) -> None:
@@ -83,6 +137,7 @@ class SchedulerRunner:
             self.scheduler.add_job(
                 platform_job,
                 trigger=trigger,
+                next_run_time=initial_next_run,
                 id=f"poll_{name}",
                 name=f"Poll {settings.name}",
                 max_instances=1,
@@ -94,11 +149,13 @@ class SchedulerRunner:
                 platform=name,
                 interval_seconds=poll_interval,
                 jitter_seconds=jitter,
+                initial_delay_seconds=round(initial_delay, 2),
             )
 
     async def run_forever(self, shutdown_event: asyncio.Event | None = None) -> None:
         """Run the scheduler in the foreground until shutdown_event is set or cancelled."""
         await self.cleanup_interrupted_runs()
+        await self.startup_health_checks()
         self.setup_jobs()
         self.scheduler.start()
         self._is_running = True
@@ -107,16 +164,12 @@ class SchedulerRunner:
         event = shutdown_event or asyncio.Event()
 
         try:
-            # Also run an initial tick on startup for all enabled platforms
-            logger.info("running_initial_startup_ticks")
-            await self.run_once()
-
-            # Wait until cancellation or shutdown trigger
+            # Wait until cancellation or shutdown trigger (jobs fire via staggered next_run_time)
             await event.wait()
         except (asyncio.CancelledError, KeyboardInterrupt):
             logger.info("scheduler_interrupt_received")
         finally:
-            await self.shutdown()
+            await asyncio.shield(self.shutdown())
 
     async def shutdown(self) -> None:
         """Cleanly stop scheduler and release database / network resources."""
@@ -125,5 +178,6 @@ class SchedulerRunner:
             self.scheduler.shutdown(wait=False)
             self._is_running = False
 
+        await self.orchestrator.close_clients()
         await dispose_engine()
         logger.info("scheduler_shutdown_complete")

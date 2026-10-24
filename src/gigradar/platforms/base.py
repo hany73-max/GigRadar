@@ -23,3 +23,7 @@ class PlatformClient(Protocol):
     async def health_check(self) -> HealthReport:
         """Detect layout drift or connectivity issues against known shapes."""
         ...
+
+    async def close(self) -> None:
+        """Clean up underlying HTTP client and connection pools."""
+        ...

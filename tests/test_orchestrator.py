@@ -33,6 +33,7 @@ class MockPlatformClient:
         self.detail_delay = detail_delay
         self.fail_on_details = fail_on_details or set()
         self.detail_fetch_calls: list[str] = []
+        self.min_expected_listing_rows: int = 0
 
     async def list_new_gigs(self, since: datetime | None = None) -> list[GigStub]:
         return list(self.stubs)
@@ -60,6 +61,9 @@ class MockPlatformClient:
 
     async def health_check(self) -> HealthReport:
         return HealthReport(platform_id=self.name, is_healthy=True, message="OK")
+
+    async def close(self) -> None:
+        pass
 
 
 @pytest_asyncio.fixture

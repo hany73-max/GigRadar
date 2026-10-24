@@ -17,6 +17,7 @@ from gigradar.db.repositories.scrape_run_repo import ScrapeRunRepository
 from gigradar.db.session import get_async_session
 from gigradar.pipeline.circuit_breaker import CircuitBreaker
 from gigradar.platforms import (
+    BlockedByBotProtection,
     FreelancerClient,
     KhamsatClient,
     MostaqlClient,
@@ -70,6 +71,23 @@ def get_platform_max_age_minutes(platform_name: str) -> int:
     return 1440  # 24 hours fallback
 
 
+def get_platform_min_expected_rows(platform_name: str) -> int:
+    """Retrieve min_expected_listing_rows from platforms.yaml if present, default 5."""
+    try:
+        platforms_cfg = load_platforms_config()
+        platform_settings = platforms_cfg.platforms.get(platform_name)
+        if (
+            platform_settings
+            and platform_settings.thresholds
+            and platform_settings.thresholds.min_expected_listing_rows
+        ):
+            return platform_settings.thresholds.min_expected_listing_rows
+    except Exception as exc:
+        logger.debug("failed_loading_platforms_config_for_min_rows", error=str(exc))
+
+    return 5
+
+
 class PlatformOrchestrator:
     """Executes platform polling ticks: listing -> age check -> dedupe -> detail fetch -> log."""
 
@@ -78,9 +96,14 @@ class PlatformOrchestrator:
         circuit_breaker: CircuitBreaker | None = None,
         engine: AsyncEngine | None = None,
         max_detail_attempts: int | None = None,
+        clients: dict[str, PlatformClient] | None = None,
+        min_expected_listing_rows: int | None = None,
     ) -> None:
         self.circuit_breaker = circuit_breaker or CircuitBreaker()
         self.engine = engine
+        self._clients: dict[str, PlatformClient] = clients or {}
+        self._platform_locks: dict[str, asyncio.Lock] = {}
+        self._min_expected_listing_rows = min_expected_listing_rows
         if max_detail_attempts is not None:
             self.max_detail_attempts = max_detail_attempts
         else:
@@ -88,20 +111,73 @@ class PlatformOrchestrator:
 
             self.max_detail_attempts = Settings().max_detail_attempts
 
+    def get_min_expected_rows(self, platform_name: str, client: PlatformClient) -> int:
+        """Resolve expected minimum listing rows for a platform."""
+        if self._min_expected_listing_rows is not None:
+            return self._min_expected_listing_rows
+        if (
+            hasattr(client, "min_expected_listing_rows")
+            and client.min_expected_listing_rows is not None
+        ):
+            return int(client.min_expected_listing_rows)
+        return get_platform_min_expected_rows(platform_name)
+
+    def get_platform_lock(self, platform_name: str) -> asyncio.Lock:
+        """Get or create per-platform asyncio.Lock preventing concurrent ticks."""
+        normalized = platform_name.strip().lower()
+        if normalized not in self._platform_locks:
+            self._platform_locks[normalized] = asyncio.Lock()
+        return self._platform_locks[normalized]
+
+    def get_client(self, platform_name: str) -> PlatformClient:
+        """Retrieve lazily created platform client, reused across ticks."""
+        normalized = platform_name.strip().lower()
+        if normalized not in self._clients:
+            self._clients[normalized] = get_default_client(normalized)
+        return self._clients[normalized]
+
+    async def close_clients(self) -> None:
+        """Close all owned platform clients and underlying HTTP pools."""
+        for name, client in list(self._clients.items()):
+            try:
+                if hasattr(client, "close") and callable(client.close):
+                    await client.close()
+            except Exception as exc:
+                logger.warning("error_closing_client", platform=name, error=str(exc))
+        self._clients.clear()
+
+    async def record_startup_health_failure(self, platform_name: str, error_message: str) -> None:
+        """Record a platform failure in circuit breaker if startup health check fails."""
+        async with get_async_session(engine=self.engine) as session:
+            platform_repo = PlatformRepository(session)
+            scrape_run_repo = ScrapeRunRepository(session)
+            client = self.get_client(platform_name)
+            base_url = getattr(client, "base_url", f"https://{platform_name}.com")
+            platform, _ = await platform_repo.get_or_create(platform_name, base_url)
+            await self.circuit_breaker.record_failure(
+                platform_repo,
+                scrape_run_repo,
+                platform.id,
+                f"Startup health check failed: {error_message}",
+            )
+            await session.commit()
+
     async def run_tick(
         self,
         platform_name: str,
         client: PlatformClient | None = None,
         session: AsyncSession | None = None,
     ) -> TickResult:
-        """Run an isolated tick for a specific platform."""
+        """Run an isolated tick for a specific platform protected by per-platform lock."""
         normalized_name = platform_name.strip().lower()
+        lock = self.get_platform_lock(normalized_name)
 
-        if session is not None:
-            return await self._execute_tick(normalized_name, client, session)
+        async with lock:
+            if session is not None:
+                return await self._execute_tick(normalized_name, client, session)
 
-        async with get_async_session(engine=self.engine) as managed_session:
-            return await self._execute_tick(normalized_name, client, managed_session)
+            async with get_async_session(engine=self.engine) as managed_session:
+                return await self._execute_tick(normalized_name, client, managed_session)
 
     async def _execute_tick(
         self,
@@ -114,7 +190,7 @@ class PlatformOrchestrator:
         scrape_run_repo = ScrapeRunRepository(session)
 
         # 1. Resolve platform record in DB and commit immediately
-        platform_client = client or get_default_client(platform_name)
+        platform_client = client or self.get_client(platform_name)
         base_url = getattr(platform_client, "base_url", f"https://{platform_name}.com")
         platform, _ = await platform_repo.get_or_create(platform_name, base_url)
         await session.commit()
@@ -158,6 +234,42 @@ class PlatformOrchestrator:
             listing_failed = False
             try:
                 stubs = await platform_client.list_new_gigs(since=since)
+            except BlockedByBotProtection as exc:
+                listing_failed = True
+                err_msg = f"Platform {platform_name} blocked by bot protection: {exc}"
+                logger.error(
+                    "tick_blocked_by_bot_protection",
+                    platform=platform_name,
+                    error=str(exc),
+                    reason=exc.reason,
+                )
+                errors.append(
+                    {
+                        "stage": "list",
+                        "error": str(exc),
+                        "blocked": True,
+                        "platform_failure": True,
+                        "timestamp": utc_now().isoformat(),
+                    }
+                )
+                await scrape_run_repo.finish_run(
+                    scrape_run.id,
+                    finished_at=utc_now(),
+                    gigs_found=0,
+                    gigs_new=0,
+                    errors=errors,
+                )
+                await self.circuit_breaker.record_failure(
+                    platform_repo, scrape_run_repo, platform.id, err_msg
+                )
+                await session.commit()
+                return TickResult(
+                    platform=platform_name,
+                    gigs_found=0,
+                    gigs_new=0,
+                    success=False,
+                    error=err_msg,
+                )
             except Exception as exc:
                 listing_failed = True
                 err_msg = f"Failed listing gigs from {platform_name}: {exc}"
@@ -188,6 +300,49 @@ class PlatformOrchestrator:
                     success=False,
                     error=err_msg,
                 )
+
+            # Check suspicious empty listings (Mostaql and Khamsat only; Freelancer is exempt)
+            if platform_name in {"mostaql", "khamsat"}:
+                min_rows = self.get_min_expected_rows(platform_name, platform_client)
+                if len(stubs) < min_rows:
+                    err_msg = (
+                        f"suspicious_empty_listing on {platform_name}: found {len(stubs)} rows "
+                        f"(expected >= {min_rows})"
+                    )
+                    logger.error(
+                        "suspicious_empty_listing",
+                        platform=platform_name,
+                        found=len(stubs),
+                        min_expected=min_rows,
+                    )
+                    errors.append(
+                        {
+                            "stage": "list",
+                            "error": "suspicious_empty_listing",
+                            "found": len(stubs),
+                            "min_expected": min_rows,
+                            "platform_failure": True,
+                            "timestamp": utc_now().isoformat(),
+                        }
+                    )
+                    await scrape_run_repo.finish_run(
+                        scrape_run.id,
+                        finished_at=utc_now(),
+                        gigs_found=len(stubs),
+                        gigs_new=0,
+                        errors=errors,
+                    )
+                    await self.circuit_breaker.record_failure(
+                        platform_repo, scrape_run_repo, platform.id, err_msg
+                    )
+                    await session.commit()
+                    return TickResult(
+                        platform=platform_name,
+                        gigs_found=len(stubs),
+                        gigs_new=0,
+                        success=False,
+                        error="suspicious_empty_listing",
+                    )
 
             # 6. Dedupe against DB and determine fresh vs stale
             stub_lookup: dict[str, GigStub] = {}
@@ -267,6 +422,35 @@ class PlatformOrchestrator:
                     detail = await platform_client.fetch_gig_detail(stub_for_fetch)
                     await gig_repo.update_gig_detail(inc_gig.id, detail)
                     # Commit after EACH gig detail update!
+                    await session.commit()
+                except BlockedByBotProtection as exc:
+                    detail_failures_in_tick += 1
+                    logger.error(
+                        "tick_detail_blocked_by_bot_protection",
+                        platform=platform_name,
+                        external_id=inc_gig.external_id,
+                        error=str(exc),
+                        reason=exc.reason,
+                    )
+                    errors.append(
+                        {
+                            "stage": "detail",
+                            "external_id": inc_gig.external_id,
+                            "error": str(exc),
+                            "blocked": True,
+                            "platform_failure": True,
+                            "timestamp": utc_now().isoformat(),
+                        }
+                    )
+                    await self.circuit_breaker.record_failure(
+                        platform_repo,
+                        scrape_run_repo,
+                        platform.id,
+                        f"Blocked by bot protection during detail fetch: {exc}",
+                    )
+                    await gig_repo.record_detail_failure(
+                        inc_gig.id, max_attempts=self.max_detail_attempts
+                    )
                     await session.commit()
                 except Exception as exc:
                     detail_failures_in_tick += 1

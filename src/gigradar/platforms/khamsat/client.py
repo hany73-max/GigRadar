@@ -8,7 +8,11 @@ import structlog
 from gigradar.core.config_loader import load_platforms_config
 from gigradar.core.config_models import PlatformSettings
 from gigradar.core.models import Gig, GigStub, HealthReport
-from gigradar.platforms.common.http_client import PoliteHttpClient, RateLimiter
+from gigradar.platforms.common.http_client import (
+    PoliteHttpClient,
+    RateLimiter,
+    detect_html_bot_protection,
+)
 from gigradar.platforms.khamsat.parser import parse_khamsat_gig_from_stub, parse_khamsat_listing
 
 logger = structlog.get_logger(__name__)
@@ -78,6 +82,7 @@ class KhamsatClient:
             page_stubs = parse_khamsat_listing(response.text, base_url=self.config.base_url)
 
             if not page_stubs:
+                detect_html_bot_protection(response.text, platform=self.name, url=url)
                 break
 
             reached_since = False
@@ -105,6 +110,7 @@ class KhamsatClient:
             response = await self._http.get(url)
             stubs = parse_khamsat_listing(response.text, base_url=self.config.base_url)
             if not stubs:
+                detect_html_bot_protection(response.text, platform=self.name, url=url)
                 return HealthReport(
                     platform_id=self.name,
                     is_healthy=False,

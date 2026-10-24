@@ -92,6 +92,7 @@ class PlatformThresholds(BaseModel):
     max_existing_bids: int = 30
     min_budget_usd: float = 25.0
     max_gig_age_minutes: int = 1440
+    min_expected_listing_rows: int = 5
 
 
 class PlatformSettings(BaseModel):

@@ -8,7 +8,11 @@ import structlog
 from gigradar.core.config_loader import load_platforms_config
 from gigradar.core.config_models import PlatformSettings
 from gigradar.core.models import Gig, GigStub, HealthReport
-from gigradar.platforms.common.http_client import PoliteHttpClient, RateLimiter
+from gigradar.platforms.common.http_client import (
+    PoliteHttpClient,
+    RateLimiter,
+    detect_html_bot_protection,
+)
 from gigradar.platforms.mostaql.parser import parse_mostaql_detail, parse_mostaql_listing
 
 logger = structlog.get_logger(__name__)
@@ -74,6 +78,7 @@ class MostaqlClient:
             page_stubs = parse_mostaql_listing(response.text, base_url=self.config.base_url)
 
             if not page_stubs:
+                detect_html_bot_protection(response.text, platform=self.name, url=url)
                 break
 
             reached_since = False
@@ -93,8 +98,12 @@ class MostaqlClient:
         """Fetch full project detail for a Mostaql stub."""
         logger.info("mostaql_fetching_detail", external_id=stub.external_id, url=stub.url)
         response = await self._http.get(stub.url)
-        gig = parse_mostaql_detail(response.text, stub=stub, base_url=self.config.base_url)
-        return gig
+        try:
+            gig = parse_mostaql_detail(response.text, stub=stub, base_url=self.config.base_url)
+            return gig
+        except ValueError:
+            detect_html_bot_protection(response.text, platform=self.name, url=stub.url)
+            raise
 
     async def health_check(self) -> HealthReport:
         """Verify Mostaql listing page structure to detect layout drift."""
@@ -103,6 +112,7 @@ class MostaqlClient:
             response = await self._http.get(url)
             stubs = parse_mostaql_listing(response.text, base_url=self.config.base_url)
             if not stubs:
+                detect_html_bot_protection(response.text, platform=self.name, url=url)
                 return HealthReport(
                     platform_id=self.name,
                     is_healthy=False,

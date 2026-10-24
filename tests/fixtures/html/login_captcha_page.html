@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Login - User Portal</title>
+    <script src="https://www.google.com/recaptcha/api.js" async defer></script>
+</head>
+<body>
+    <form action="/login" method="post">
+        <h2>Please sign in</h2>
+        <input type="text" name="username" placeholder="Username">
+        <input type="password" name="password" placeholder="Password">
+        <div class="g-recaptcha" data-sitekey="synthetic-site-key"></div>
+        <button type="submit">Sign In</button>
+    </form>
+</body>
+</html>

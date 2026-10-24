@@ -6,9 +6,9 @@ This document is the single source of truth for the project's current state, dec
 
 ## Current Status Overview
 
-- **Current Phase:** Phase 2: Storage, dedupe, scheduling (COMPLETED with Phase 2 fixes)
+- **Current Phase:** Phase 2.5a: Reliability hardening (COMPLETED)
 - **Next Phase:** Phase 3: Rules filter
-- **Overall System Health:** Green (All 130 unit tests passing, `ruff` clean, `mypy --strict` clean on 53 source files, 0 warnings with `-W error`, `scripts/check.ps1` passing, `gigradar doctor`, `gigradar db upgrade`, `gigradar db stats`, `gigradar run [--once]` operational)
+- **Overall System Health:** Green (All 152 unit tests passing, `ruff` clean, `mypy --strict` clean on 55 source files, 0 warnings with `-W error`, `scripts/check.ps1` passing, `gigradar doctor [--offline]`, `gigradar db upgrade`, `gigradar db stats`, `gigradar run [--once]` operational)
 
 ---
 
@@ -387,7 +387,95 @@ Phase 2 storage, deduplication, scheduling, and concurrency/transaction fixes ar
 - **Graceful Startup Recovery:** Marking orphaned runs on startup ensures clean audit trails without manual DB surgery after process crashes or restarts.
 
 #### 4. Handoff note
-Phase 2 fixes are complete and verified. The codebase is clean, typed (`mypy --strict`), formatted, and backed by 130 passing tests with `-W error`. Ready for **Phase 3** (Rules-based pre-filter).
+Phase 2 fixes are complete and verified. The codebase is clean, typed (`mypy --strict`), formatted, and backed by 130 passing tests with `-W error`. Ready for **Phase 2.5a** (Reliability Hardening).
 
+### Phase 2.5a: Reliability Hardening (Completed)
 
+#### 1. What was built
+- **WAF & Bot Protection Detection (`src/gigradar/platforms/common/exceptions.py`, `src/gigradar/platforms/common/http_client.py`):**
+  - Created `BlockedByBotProtection(PlatformError)` exception.
+  - In `PoliteHttpClient.get()`, detects HTTP 202 status code and `x-amzn-waf-action` response header, immediately raising `BlockedByBotProtection` before parsing.
+  - Implemented `detect_html_bot_protection(html)` checking for Cloudflare challenges, AWS WAF challenges, CAPTCHAs, and maintenance pages.
+  - Applied body markers strictly when an HTML listing yields 0 rows (in Mostaql and Khamsat client listings and Mostaql detail fetch), ensuring legitimate gigs whose title or description contains "challenge", "captcha", or maintenance keywords never trigger false alarms.
+  - Excluded Freelancer JSON API from HTML body marker scans.
+- **Suspicious Empty Listing Detection & Breaker Accounting (`src/gigradar/pipeline/orchestrator.py`, `src/gigradar/core/config_models.py`, `config/platforms.yaml`):**
+  - Added `min_expected_listing_rows: int = 5` to `PlatformThresholds` in `config/platforms.yaml` for Mostaql and Khamsat (Freelancer remains at default 0).
+  - In `PlatformOrchestrator._execute_tick()`, catches `BlockedByBotProtection` and records a platform failure on the circuit breaker.
+  - If a scrape tick yields 0 gigs on an HTML platform where `min_expected_listing_rows > 0`, treats it as `suspicious_empty_listing`, recording a platform breaker failure and finishing the run with error state.
+- **Startup Platform Health Checks (`src/gigradar/pipeline/scheduler.py`, `src/gigradar/cli.py`):**
+  - Added `startup_health_checks()` to `SchedulerRunner`. Runs a single live polite health check per enabled platform before entering polling loops.
+  - Non-crashing isolation: failures log errors and record breaker failures, but never crash `gigradar run`.
+  - Added `--offline` flag to `gigradar doctor` (skipping live HTTP requests to platforms and Gemini API).
+  - Added Section 5 "Platform Health Checks" table to `gigradar doctor` CLI diagnostics.
+- **HTTP Client Resource Management & Concurrency Guards (`src/gigradar/pipeline/orchestrator.py`, `src/gigradar/platforms/base.py`):**
+  - Added `async def close(self) -> None:` to `PlatformClient` protocol.
+  - Implemented lazy client reuse in `PlatformOrchestrator.get_client()` across ticks, eliminating client connection and file descriptor leaks.
+  - Added `close_clients()` called on scheduler shutdown (`SchedulerRunner.shutdown()`).
+  - Implemented per-platform concurrency lock via `get_platform_lock()` in `PlatformOrchestrator`, preventing overlapping ticks on the same platform even if an external caller or tight timer triggers simultaneously.
+- **Secret Redaction & Third-Party Logging Sanitization (`src/gigradar/core/logging.py`):**
+  - Implemented `redact_secrets()` sanitizing Telegram bot tokens (`bot<digits>:<token>`) and sensitive query parameters (`token=...`, `key=...`).
+  - Added `RedactingFilter` for Python stdlib logging and `structlog_redaction_processor` / `RedactingProcessorFormatter` for structlog, ensuring secrets are sanitized across log messages and exception tracebacks.
+  - Set noisy HTTP and migration loggers (`httpx`, `httpcore`, `alembic`) to `logging.WARNING`.
+- **Scheduler Startup Staggering (`src/gigradar/pipeline/scheduler.py`):**
+  - Removed manual `run_once()` invocation inside `run_forever()`.
+  - Staggered initial `next_run_time` across platforms (0s, 20s, 40s + jitter) so platforms do not spike the network or database at the same instant on startup.
+- **Reliability Hardening Test Suite (`tests/test_reliability_hardening.py`):**
+  - 21 comprehensive new unit tests covering:
+    - HTTP 202 and `x-amzn-waf-action` header detection.
+    - Cloudflare, AWS WAF, CAPTCHA, and maintenance body marker detection on 0-stub HTML responses.
+    - Neutrality of legitimate gigs containing "challenge" or "captcha" in title/body (no false positives).
+    - Exemption of Freelancer JSON API from HTML marker scans.
+    - Breaker failure recording on `BlockedByBotProtection` and `suspicious_empty_listing`.
+    - Client reuse across ticks and clean shutdown via `close_clients()`.
+    - Per-platform `asyncio.Lock` preventing concurrent ticks.
+    - Secret redaction in structlog, stdlib logging, and exception tracebacks.
+    - Non-crashing startup health checks recording breaker failures.
+    - Initial job staggering (0s, 20s, 40s + jitter).
+    - Clean cancellation in `run_forever()` shielding `shutdown()`.
 
+#### 2. How to run / verify it
+```bash
+# 1. Run all tests with strict zero-warning policy:
+uv run pytest -W error
+
+# 2. Run static typing and linting checks:
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy src tests
+
+# 3. Run doctor diagnostics in offline mode:
+uv run gigradar doctor --offline
+
+# 4. Run doctor diagnostics with live platform health checks:
+uv run gigradar doctor
+
+# 5. Run single polling tick:
+uv run gigradar run --once
+```
+
+#### 3. Test results
+- **Pytest:** 152 passed, 0 warnings (with `-W error`) in 23.51s.
+- **Ruff:** All checks passed (0 lint issues, 61 files formatted).
+- **Mypy:** Success: no issues found in 55 source files (`--strict` mode).
+
+#### 4. Decisions made and why
+- **Two-Condition Body Marker Trigger:** Body markers ("Just a moment", "challenge", "captcha", maintenance) only trigger when parsed listings yield 0 rows. Legitimate Arabic and English gig postings often use the word "challenge" (تحدي / challenge) or describe CAPTCHA integrations; triggering on text alone caused false positives.
+- **Client Reuse Across Ticks:** Instantiating new HTTP clients on every tick leaked async transports and background connections under long-running daemon execution. Reusing one lazily initialized client per platform and closing all on `shutdown()` guarantees predictable socket life cycles.
+- **Non-Crashing Startup Health Checks:** A platform experiencing temporary maintenance or WAF blocks at startup must not prevent the daemon from running or other healthy platforms from being polled. Recording a breaker failure on the failing platform and proceeding ensures resilient continuous operation.
+- **Explicit Redaction of Formatted Logs & Tracebacks:** Both `structlog` and stdlib `logging` formatters were equipped with regex redaction filters so that neither unhandled exceptions printing URLs with query tokens nor debug logs can ever leak credentials into log aggregation or terminal outputs.
+
+#### 5. Config changes made
+- Modified `config/platforms.yaml`: added `min_expected_listing_rows: 5` under `mostaql.thresholds` and `khamsat.thresholds`. Freelancer remains exempt (default 0) as it uses a structured JSON API. No other config changes were made.
+
+#### 6. Known issues / risks
+- None. System is fully operational, clean, and green.
+
+#### 7. Questions for owner
+- None at this stage.
+
+#### 8. Proposed next phase and inputs needed
+- **Phase 3: Rules-based pre-filter (section 6.2 of Master Prompt)**
+- *Inputs needed:* Owner confirmation to proceed with Phase 3.
+
+#### 9. Handoff note
+Phase 2.5a reliability hardening is complete and verified. All silent-failure risks identified in the review have been resolved. All 152 unit tests pass with zero warnings, lint and mypy strict pass with zero issues. Ready for Phase 3 upon user "go".

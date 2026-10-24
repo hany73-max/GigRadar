@@ -52,6 +52,11 @@ def doctor(
         "--skip-live-llm",
         help="Skip live network check to Gemini API.",
     ),
+    offline: bool = typer.Option(
+        False,
+        "--offline",
+        help="Skip all live network checks (Gemini and platform health checks).",
+    ),
 ) -> None:
     """Run diagnostics on environment, configurations, database URL, and live LLM key."""
     settings = reload_settings()
@@ -207,6 +212,12 @@ def doctor(
         llm_table.add_row(
             "Live Connectivity", "[yellow]SKIPPED[/yellow]", "Placeholder key; add real key in .env"
         )
+    elif offline:
+        masked_gemini = mask_key(raw_key)
+        llm_table.add_row(
+            "GEMINI_API_KEY", f"[green]FOUND[/green] ({masked_gemini})", "Key present"
+        )
+        llm_table.add_row("Live Connectivity", "[cyan]SKIPPED[/cyan]", "--offline passed")
     elif skip_live_llm:
         masked_gemini = mask_key(raw_key)
         llm_table.add_row(
@@ -227,6 +238,55 @@ def doctor(
             llm_table.add_row("Live Connectivity", "[red]FAIL[/red]", msg)
 
     console.print(llm_table)
+    console.print()
+
+    # 5. Platform Health Checks
+    plat_health_table = Table(
+        title="Platform Health Checks", show_header=True, header_style="bold magenta"
+    )
+    plat_health_table.add_column("Platform", style="cyan", width=25)
+    plat_health_table.add_column("Status", width=15)
+    plat_health_table.add_column("Details", style="dim")
+
+    if offline:
+        plat_health_table.add_row(
+            "All Platforms",
+            "[cyan]SKIPPED[/cyan]",
+            "--offline passed",
+        )
+    else:
+        from gigradar.core.config_loader import load_platforms_config
+        from gigradar.pipeline.orchestrator import PlatformOrchestrator
+
+        platforms_cfg = load_platforms_config()
+        orchestrator = PlatformOrchestrator()
+
+        async def run_platform_checks() -> list[tuple[str, bool, str]]:
+            checks: list[tuple[str, bool, str]] = []
+            for name, p_settings in platforms_cfg.platforms.items():
+                if not p_settings.enabled:
+                    checks.append((name, True, "Disabled in platforms.yaml (skipped)"))
+                    continue
+                client = orchestrator.get_client(name)
+                try:
+                    rep = await client.health_check()
+                    checks.append((name, rep.is_healthy, rep.message))
+                except Exception as exc:
+                    checks.append((name, False, f"Exception: {exc}"))
+            await orchestrator.close_clients()
+            return checks
+
+        with console.status("[bold green]Checking platform health...[/bold green]"):
+            health_reports = asyncio.run(run_platform_checks())
+
+        for p_name, p_ok, p_msg in health_reports:
+            if not p_ok:
+                all_passed = False
+                plat_health_table.add_row(p_name, "[red]FAIL[/red]", p_msg)
+            else:
+                plat_health_table.add_row(p_name, "[green]PASS[/green]", p_msg)
+
+    console.print(plat_health_table)
     console.print()
 
     # Summary
