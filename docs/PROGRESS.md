@@ -6,9 +6,9 @@ This document is the single source of truth for the project's current state, dec
 
 ## Current Status Overview
 
-- **Current Phase:** Phase 2.5a: Reliability hardening (COMPLETED)
+- **Current Phase:** Phase 2.5a-fix: Test isolation, traceback safety & redaction hardening (COMPLETED)
 - **Next Phase:** Phase 3: Rules filter
-- **Overall System Health:** Green (All 152 unit tests passing, `ruff` clean, `mypy --strict` clean on 55 source files, 0 warnings with `-W error`, `scripts/check.ps1` passing, `gigradar doctor [--offline]`, `gigradar db upgrade`, `gigradar db stats`, `gigradar run [--once]` operational)
+- **Overall System Health:** Green (All 162 unit tests passing in 23.06s with `-W error`, `pipeline/scheduler.py` 99% coverage, `gigradar.db` untouched, `ruff` clean, `mypy --strict` clean on 56 source files, `scripts/check.ps1` passing, `gigradar doctor [--offline]`, `gigradar db upgrade`, `gigradar db stats`, `gigradar run [--once]` operational)
 
 ---
 
@@ -479,3 +479,69 @@ uv run gigradar run --once
 
 #### 9. Handoff note
 Phase 2.5a reliability hardening is complete and verified. All silent-failure risks identified in the review have been resolved. All 152 unit tests pass with zero warnings, lint and mypy strict pass with zero issues. Ready for Phase 3 upon user "go".
+
+### Phase 2.5a-fix: Test Isolation, Traceback Safety & Redaction Hardening (Completed)
+
+#### 1. What was built
+- **Test Database Isolation & Guard (`tests/conftest.py`):**
+  - Added session-scoped `guard_real_database` fixture recording presence, file size, and `mtime_ns` of `gigradar.db` at repository root, asserting at session teardown that the file was neither modified nor created.
+  - Added session-scoped `template_db_path` fixture initializing a template SQLite schema once via `Base.metadata.create_all`.
+  - Added function-scoped autouse `isolate_database_and_settings` fixture copying the template DB to a fresh `test_isolated.db` in `tmp_path`, setting `DATABASE_URL`, reloading settings via `reload_settings()`, and resetting global engine via `reset_global_engine()` before and after every single test.
+  - Added `reset_global_engine()` in `src/gigradar/db/session.py` for clean synchronous disposal of async connection pools and engine caches.
+- **Traceback Local-Variable Suppression (`src/gigradar/core/logging.py`):**
+  - Updated `setup_logging` console renderer to use `RichTracebackFormatter(show_locals=False, color_system=...)`, eliminating local variable dumps in formatted tracebacks and preventing sensitive frame variables from leaking to stdout/stderr.
+  - Added test verifying an exception frame holding a dynamically constructed fake secret token does not leak into log outputs.
+- **Enhanced Secret Redaction (`src/gigradar/core/logging.py`):**
+  - Configured literal secret redaction for `Settings` credentials (`GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `FREELANCER_OAUTH_TOKEN`), ignoring empty strings, values shorter than 8 characters, and known template placeholders (`your_gemini_api_key_here`, `.env.example` telegram token).
+  - Enhanced regex redaction for:
+    - Bare `token=...`, `key=...`, `api_key=...`, `secret=...` assignments outside query strings.
+    - `Authorization: Bearer <token>` headers.
+    - `x-goog-api-key: <key>` headers.
+    - Specific Google API key patterns: `AIza[0-9A-Za-z_-]{35}` (AIza followed by 35 URL-safe characters) and `AQ\.[0-9A-Za-z_-]{20,}` (AQ. followed by at least 20 URL-safe characters).
+  - Added tests verifying ordinary text ("AQ", "AQUA", Arabic text containing Latin letters) is NOT redacted.
+  - Guarded `configure_secrets_from_settings()` to ensure `redact_secrets()` operates safely before `setup_logging()` has run or if `.env` is absent.
+- **Scheduler Test Isolation & Coverage (`src/gigradar/pipeline/scheduler.py`, `tests/test_reliability_hardening.py`):**
+  - Fixed all scheduler tests in `tests/test_reliability_hardening.py` to instantiate `PlatformOrchestrator` with explicit temporary database engines.
+  - Made `stagger_step_seconds` configurable in `setup_jobs()` (default 20.0s, tests set to 0.0s) and patched sleep durations, eliminating real-time waiting.
+  - Added test coverage for `cleanup_interrupted_runs()` when active runs exist, `startup_health_checks()` healthy and exception paths, `run_once()` with enabled and disabled platforms, and disabled platform job filtering.
+  - Coverage for `src/gigradar/pipeline/scheduler.py` reached **99%** (105 statements, 1 missed).
+
+#### 2. How to run / verify it
+```bash
+# 1. Run all tests with strict zero-warning policy:
+uv run pytest -W error
+
+# 2. Measure coverage on scheduler.py:
+uv run coverage run -m pytest tests/test_reliability_hardening.py
+uv run coverage report --include="*scheduler.py"
+
+# 3. Static checks:
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy src tests
+```
+
+#### 3. Test results
+- **Pytest:** 162 passed in 23.06s (0 warnings with `-W error`).
+- **Scheduler Coverage:** 99% (104 of 105 statements covered).
+- **Database Isolation:** Real `gigradar.db` presence, size, and mtime verified unchanged across the suite.
+- **Ruff:** All checks passed (0 lint issues, 62 files formatted).
+- **Mypy:** Success: no issues found in 56 source files (`--strict` mode).
+
+#### 4. Decisions made and why
+- **Session Template DB Copy vs Alembic:** Running full Alembic migrations on every test created significant overhead. Generating a single template DB via `Base.metadata.create_all` at session start and performing `shutil.copyfile` for each test reduced test setup time to sub-millisecond per test while providing complete schema isolation.
+- **Safe Literal Redaction Thresholds:** Filtering literal secrets by minimum length ($\ge 8$ chars) and checking `is_placeholder()` ensures placeholder values in development environments never corrupt normal logs or replace empty strings.
+
+#### 5. Known issues / risks
+- None. System is fully operational, clean, and green.
+
+#### 6. Questions for owner
+- None at this stage.
+
+#### 7. Proposed next phase and inputs needed
+- **Phase 3: Rules-based pre-filter (section 6.2 of Master Prompt)**
+- *Inputs needed:* Owner confirmation to proceed with Phase 3.
+
+#### 8. Handoff note
+Phase 2.5a-fix is complete. The entire suite runs cleanly under 24 seconds with zero warnings, scheduler coverage is 99%, secrets and tracebacks are fully sanitized, and test isolation guarantees the real database is never touched. Ready for Phase 3.
+

@@ -35,6 +35,7 @@ dev = [
     "mypy>=1.10.0",
     "types-pyyaml>=6.0.12",
     "types-beautifulsoup4>=4.12.0",
+    "coverage>=7.0.0",
 ]
 
 [project.scripts]

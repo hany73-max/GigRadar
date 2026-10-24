@@ -105,12 +105,10 @@ class SchedulerRunner:
 
         return results
 
-    def setup_jobs(self) -> None:
+    def setup_jobs(self, stagger_step_seconds: float = 20.0) -> None:
         """Configure jobs for each enabled platform with intervals, jitter, and staggered starts."""
         platforms_cfg = load_platforms_config()
         now = datetime.now(UTC)
-
-        stagger_step_seconds = 20.0
         idx = 0
 
         for name, settings in platforms_cfg.platforms.items():
@@ -154,16 +152,16 @@ class SchedulerRunner:
 
     async def run_forever(self, shutdown_event: asyncio.Event | None = None) -> None:
         """Run the scheduler in the foreground until shutdown_event is set or cancelled."""
-        await self.cleanup_interrupted_runs()
-        await self.startup_health_checks()
-        self.setup_jobs()
-        self.scheduler.start()
-        self._is_running = True
-        logger.info("scheduler_started", jobs_count=len(self.scheduler.get_jobs()))
-
         event = shutdown_event or asyncio.Event()
 
         try:
+            await self.cleanup_interrupted_runs()
+            await self.startup_health_checks()
+            self.setup_jobs()
+            self.scheduler.start()
+            self._is_running = True
+            logger.info("scheduler_started", jobs_count=len(self.scheduler.get_jobs()))
+
             # Wait until cancellation or shutdown trigger (jobs fire via staggered next_run_time)
             await event.wait()
         except (asyncio.CancelledError, KeyboardInterrupt):
@@ -179,5 +177,7 @@ class SchedulerRunner:
             self._is_running = False
 
         await self.orchestrator.close_clients()
+        if self.orchestrator.engine is not None:
+            await self.orchestrator.engine.dispose()
         await dispose_engine()
         logger.info("scheduler_shutdown_complete")

@@ -133,6 +133,18 @@ async def get_async_session(
             raise
 
 
+def reset_global_engine() -> None:
+    """Synchronously reset and dispose the global engine and session factory."""
+    global _GLOBAL_ENGINE, _GLOBAL_SESSION_FACTORY
+    if _GLOBAL_ENGINE is not None:
+        try:
+            _GLOBAL_ENGINE.sync_engine.dispose()
+        except Exception:
+            pass
+        _GLOBAL_ENGINE = None
+        _GLOBAL_SESSION_FACTORY = None
+
+
 async def dispose_engine() -> None:
     """Cleanly dispose of the global database engine."""
     global _GLOBAL_ENGINE, _GLOBAL_SESSION_FACTORY

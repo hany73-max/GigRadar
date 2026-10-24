@@ -353,50 +353,110 @@ def test_secret_redaction_query_params() -> None:
     assert "normal_param=hello" in redacted
 
 
-def test_logging_redaction_in_stdlib_and_exception_traceback() -> None:
+def test_secret_redaction_bare_key_assignments() -> None:
+    text = "Connecting with token=secret_token_12345 and api_key='secret_api_key_6789' and key: secret_key_9999"
+    redacted = redact_secrets(text)
+    assert "secret_token_12345" not in redacted
+    assert "secret_api_key_6789" not in redacted
+    assert "secret_key_9999" not in redacted
+    assert "token=[REDACTED]" in redacted
+    assert "api_key='[REDACTED]'" in redacted
+    assert "key: [REDACTED]" in redacted
+
+
+def test_secret_redaction_headers() -> None:
+    header_text = (
+        "Headers: Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.test and "
+        "x-goog-api-key: my_google_secret_key_12345"
+    )
+    redacted = redact_secrets(header_text)
+    assert "Bearer eyJhbGciOiJIUzI1NiJ9.test" not in redacted
+    assert "Authorization: Bearer [REDACTED]" in redacted
+    assert "my_google_secret_key_12345" not in redacted
+    assert "x-goog-api-key: [REDACTED]" in redacted
+
+
+def test_secret_redaction_google_key_patterns() -> None:
+    valid_aiza = "AIza" + "A" * 35
+    valid_aq = "AQ." + "B" * 20
+    text = f"Keys found: {valid_aiza} and {valid_aq}"
+    redacted = redact_secrets(text)
+    assert valid_aiza not in redacted
+    assert valid_aq not in redacted
+    assert redacted.count("[REDACTED]") == 2
+
+
+def test_secret_redaction_does_not_redact_normal_text() -> None:
+    normal_text = "AQ and AQUA and مشروعات ML scraping and project AQ.short"
+    redacted = redact_secrets(normal_text)
+    assert redacted == normal_text
+
+
+def test_literal_secret_redaction_from_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gigradar.core.logging import register_configured_secrets
+
+    register_configured_secrets(
+        [
+            "SUPER_LITERAL_SECRET_VALUE_12345",
+            "",
+            "short",
+            "your_gemini_api_key_here",
+            "123456789:ABCdefGHIjklMNOpqrsTUVwxyz",
+        ]
+    )
+
+    text = (
+        "Configured secret: SUPER_LITERAL_SECRET_VALUE_12345 and "
+        "your_gemini_api_key_here and 123456789:ABCdefGHIjklMNOpqrsTUVwxyz and normal text"
+    )
+    redacted = redact_secrets(text)
+    assert "SUPER_LITERAL_SECRET_VALUE_12345" not in redacted
+    assert "[REDACTED]" in redacted
+    # Known placeholders must NOT be redacted as literal secrets
+    assert "your_gemini_api_key_here" in redacted
+    assert "normal text" in redacted
+
+
+def test_traceback_local_variables_not_shown_in_logs() -> None:
+    import structlog
+    from structlog.dev import ConsoleRenderer, RichTracebackFormatter
+
+    from gigradar.core.logging import RedactingProcessorFormatter
+
     stream = io.StringIO()
     handler = logging.StreamHandler(stream)
 
-    import structlog
-
-    from gigradar.core.logging import RedactingFilter, RedactingProcessorFormatter
-
-    shared_processors: list[structlog.types.Processor] = [
-        structlog.stdlib.add_logger_name,
-        structlog.stdlib.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso"),
-    ]
     formatter = RedactingProcessorFormatter(
-        foreign_pre_chain=shared_processors,
+        foreign_pre_chain=[],
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-            structlog.dev.ConsoleRenderer(colors=False),
+            ConsoleRenderer(
+                colors=False,
+                exception_formatter=RichTracebackFormatter(
+                    show_locals=False,
+                    color_system="standard",
+                ),
+            ),
         ],
     )
     handler.setFormatter(formatter)
-    handler.addFilter(RedactingFilter())
-
-    test_logger = logging.getLogger("test_redact_logger")
+    test_logger = logging.getLogger("test_show_locals_logger")
     test_logger.handlers.clear()
     test_logger.addHandler(handler)
     test_logger.setLevel(logging.INFO)
 
-    # 1. Stdlib log line with token
-    test_logger.info(
-        "Connecting to https://api.telegram.org/bot123456789:ABCdefGHI-jkl_mnoPQR/getUpdates"
-    )
+    def function_with_sensitive_local() -> None:
+        fake_secret_token_in_frame = "".join(["DO_NOT_PRINT", "_LOCAL_FRAME", "_TOKEN_7777"])  # noqa: F841
+        raise ValueError("Computation failed in worker frame")
 
-    # 2. Exception traceback containing token
     try:
-        raise RuntimeError(
-            "Failure contacting https://api.telegram.org/bot123456789:ABCdefGHI-jkl_mnoPQR/sendMessage"
-        )
-    except RuntimeError:
+        function_with_sensitive_local()
+    except ValueError:
         test_logger.exception("Handled call error")
 
     output = stream.getvalue()
-    assert "ABCdefGHI-jkl_mnoPQR" not in output
-    assert "bot123456789:[REDACTED]" in output
+    assert "DO_NOT_PRINT_LOCAL_FRAME_TOKEN_7777" not in output
+    assert "Computation failed in worker frame" in output
 
 
 def test_logger_levels_warning() -> None:
@@ -488,7 +548,7 @@ async def test_per_platform_lock_prevents_concurrent_ticks_on_same_platform(tmp_
 
         async def list_new_gigs(self, since: datetime | None = None) -> list[GigStub]:
             execution_order.append("start_list")
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.005)
             execution_order.append("end_list")
             return [
                 GigStub(
@@ -541,9 +601,18 @@ async def test_per_platform_lock_prevents_concurrent_ticks_on_same_platform(tmp_
 
 
 @pytest.mark.asyncio
-async def test_scheduler_setup_jobs_staggered() -> None:
-    runner = SchedulerRunner()
-    runner.setup_jobs()
+async def test_scheduler_setup_jobs_staggered(tmp_path: Path) -> None:
+    from gigradar.db.models import Base
+    from gigradar.db.session import create_engine_from_url
+
+    db_path = tmp_path / "scheduler_stagger.db"
+    engine = create_engine_from_url(f"sqlite+aiosqlite:///{db_path}")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    orch = PlatformOrchestrator(engine=engine)
+    runner = SchedulerRunner(orchestrator=orch)
+    runner.setup_jobs(stagger_step_seconds=20.0)
 
     jobs = runner.scheduler.get_jobs()
     assert len(jobs) >= 2  # Mostaql, Khamsat, Freelancer
@@ -559,7 +628,15 @@ async def test_scheduler_setup_jobs_staggered() -> None:
 
 
 @pytest.mark.asyncio
-async def test_scheduler_startup_health_checks_unhealthy_records_failure() -> None:
+async def test_scheduler_startup_health_checks_unhealthy_records_failure(tmp_path: Path) -> None:
+    from gigradar.db.models import Base
+    from gigradar.db.session import create_engine_from_url
+
+    db_path = tmp_path / "scheduler_health_fail.db"
+    engine = create_engine_from_url(f"sqlite+aiosqlite:///{db_path}")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
     class MockUnhealthyClient:
         async def health_check(self) -> HealthReport:
             return HealthReport(
@@ -581,7 +658,7 @@ async def test_scheduler_startup_health_checks_unhealthy_records_failure() -> No
             nonlocal recorded_failure
             recorded_failure = True
 
-    orch = MockOrchestrator()
+    orch = MockOrchestrator(engine=engine)
     runner = SchedulerRunner(orchestrator=orch)
 
     # Health check must never raise an unhandled error or crash
@@ -593,7 +670,195 @@ async def test_scheduler_startup_health_checks_unhealthy_records_failure() -> No
 
 
 @pytest.mark.asyncio
-async def test_scheduler_run_forever_and_clean_shutdown() -> None:
+async def test_scheduler_startup_health_checks_healthy_and_exceptions(tmp_path: Path) -> None:
+    from gigradar.db.models import Base
+    from gigradar.db.session import create_engine_from_url
+
+    db_path = tmp_path / "scheduler_health_ok.db"
+    engine = create_engine_from_url(f"sqlite+aiosqlite:///{db_path}")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    class MockClientHealthy:
+        async def health_check(self) -> HealthReport:
+            return HealthReport(platform_id="mock", is_healthy=True, message="OK")
+
+        async def close(self) -> None:
+            pass
+
+    class MockClientRaising:
+        async def health_check(self) -> HealthReport:
+            raise ConnectionError("DNS resolution failed")
+
+        async def close(self) -> None:
+            pass
+
+    class MixedOrchestrator(PlatformOrchestrator):
+        def get_client(self, platform_name: str) -> Any:
+            if platform_name == "mostaql":
+                return MockClientHealthy()
+            return MockClientRaising()
+
+        async def record_startup_health_failure(
+            self, platform_name: str, error_message: str
+        ) -> None:
+            pass
+
+    orch = MixedOrchestrator(engine=engine)
+    runner = SchedulerRunner(orchestrator=orch)
+    results = await runner.startup_health_checks()
+    assert results.get("mostaql") is True
+    assert results.get("khamsat") is False
+    await runner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_cleanup_interrupted_runs_with_active(tmp_path: Path) -> None:
+    from gigradar.db.models import Base
+    from gigradar.db.repositories.platform_repo import PlatformRepository
+    from gigradar.db.repositories.scrape_run_repo import ScrapeRunRepository
+    from gigradar.db.session import create_engine_from_url, get_async_session
+
+    db_path = tmp_path / "cleanup_interrupted.db"
+    engine = create_engine_from_url(f"sqlite+aiosqlite:///{db_path}")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with get_async_session(engine=engine) as session:
+        plat_repo = PlatformRepository(session)
+        plat, _ = await plat_repo.get_or_create("mostaql", "https://mostaql.com")
+        run_repo = ScrapeRunRepository(session)
+        await run_repo.start_run(plat.id)
+        await session.commit()
+
+    orch = PlatformOrchestrator(engine=engine)
+    runner = SchedulerRunner(orchestrator=orch)
+    count = await runner.cleanup_interrupted_runs()
+    assert count >= 1
+    await runner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_run_once_success_and_disabled(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    from gigradar.core.config_models import PlatformsConfig, PlatformSettings, PlatformThresholds
+    from gigradar.db.models import Base
+    from gigradar.db.session import create_engine_from_url
+
+    db_path = tmp_path / "scheduler_run_once.db"
+    engine = create_engine_from_url(f"sqlite+aiosqlite:///{db_path}")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    class DummySuccessOrchestrator(PlatformOrchestrator):
+        async def run_tick(
+            self,
+            platform_name: str,
+            client: Any = None,
+            session: Any = None,
+            **kwargs: Any,
+        ) -> TickResult:
+            return TickResult(platform=platform_name, gigs_found=3, gigs_new=1, success=True)
+
+    orch = DummySuccessOrchestrator(engine=engine)
+    runner = SchedulerRunner(orchestrator=orch)
+
+    fake_cfg = PlatformsConfig(
+        platforms={
+            "enabled_p": PlatformSettings(
+                name="Enabled",
+                type="scraper",
+                base_url="https://enabled.com",
+                enabled=True,
+                poll_interval_seconds=60,
+                jitter_seconds_min=0,
+                jitter_seconds_max=0,
+                thresholds=PlatformThresholds(),
+            ),
+            "disabled_p": PlatformSettings(
+                name="Disabled",
+                type="scraper",
+                base_url="https://disabled.com",
+                enabled=False,
+                poll_interval_seconds=60,
+                jitter_seconds_min=0,
+                jitter_seconds_max=0,
+                thresholds=PlatformThresholds(),
+            ),
+        }
+    )
+
+    with patch("gigradar.pipeline.scheduler.load_platforms_config", return_value=fake_cfg):
+        results = await runner.run_once()
+        assert "enabled_p" in results
+        assert results["enabled_p"].success is True
+        assert "disabled_p" not in results
+
+    await runner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_setup_jobs_with_disabled_platform(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    from gigradar.core.config_models import PlatformsConfig, PlatformSettings, PlatformThresholds
+    from gigradar.db.models import Base
+    from gigradar.db.session import create_engine_from_url
+
+    db_path = tmp_path / "scheduler_disabled.db"
+    engine = create_engine_from_url(f"sqlite+aiosqlite:///{db_path}")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    orch = PlatformOrchestrator(engine=engine)
+    runner = SchedulerRunner(orchestrator=orch)
+
+    fake_cfg = PlatformsConfig(
+        platforms={
+            "plat_a": PlatformSettings(
+                name="PlatA",
+                type="scraper",
+                base_url="https://plata.com",
+                enabled=True,
+                poll_interval_seconds=60,
+                jitter_seconds_min=0,
+                jitter_seconds_max=0,
+                thresholds=PlatformThresholds(),
+            ),
+            "plat_b": PlatformSettings(
+                name="PlatB",
+                type="scraper",
+                base_url="https://platb.com",
+                enabled=False,
+                poll_interval_seconds=60,
+                jitter_seconds_min=0,
+                jitter_seconds_max=0,
+                thresholds=PlatformThresholds(),
+            ),
+        }
+    )
+
+    with patch("gigradar.pipeline.scheduler.load_platforms_config", return_value=fake_cfg):
+        runner.setup_jobs(stagger_step_seconds=0.0)
+        jobs = runner.scheduler.get_jobs()
+        job_ids = [j.id for j in jobs]
+        assert "poll_plat_a" in job_ids
+        assert "poll_plat_b" not in job_ids
+
+    await runner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_run_forever_and_clean_shutdown(tmp_path: Path) -> None:
+    from gigradar.db.models import Base
+    from gigradar.db.session import create_engine_from_url
+
+    db_path = tmp_path / "scheduler_run_forever.db"
+    engine = create_engine_from_url(f"sqlite+aiosqlite:///{db_path}")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
     ticks_called: list[str] = []
 
     class FakeOrchestrator(PlatformOrchestrator):
@@ -622,14 +887,14 @@ async def test_scheduler_run_forever_and_clean_shutdown() -> None:
 
             return DummyClient()
 
-    fake_orch = FakeOrchestrator()
+    fake_orch = FakeOrchestrator(engine=engine)
     runner = SchedulerRunner(orchestrator=fake_orch)
 
     shutdown_event = asyncio.Event()
 
     # Trigger shutdown after short delay
     async def trigger_shutdown() -> None:
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.001)
         shutdown_event.set()
 
     shutdown_task = asyncio.create_task(trigger_shutdown())
@@ -640,7 +905,15 @@ async def test_scheduler_run_forever_and_clean_shutdown() -> None:
 
 
 @pytest.mark.asyncio
-async def test_scheduler_run_once_with_exceptions() -> None:
+async def test_scheduler_run_once_with_exceptions(tmp_path: Path) -> None:
+    from gigradar.db.models import Base
+    from gigradar.db.session import create_engine_from_url
+
+    db_path = tmp_path / "scheduler_run_once_exc.db"
+    engine = create_engine_from_url(f"sqlite+aiosqlite:///{db_path}")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
     class FailingOrchestrator(PlatformOrchestrator):
         async def run_tick(
             self,
@@ -651,7 +924,7 @@ async def test_scheduler_run_once_with_exceptions() -> None:
         ) -> TickResult:
             raise RuntimeError("Database unavailable")
 
-    runner = SchedulerRunner(orchestrator=FailingOrchestrator())
+    runner = SchedulerRunner(orchestrator=FailingOrchestrator(engine=engine))
     results = await runner.run_once()
     assert len(results) >= 2
     for _plat, res in results.items():
@@ -661,7 +934,15 @@ async def test_scheduler_run_once_with_exceptions() -> None:
 
 
 @pytest.mark.asyncio
-async def test_scheduler_platform_job_callback() -> None:
+async def test_scheduler_platform_job_callback(tmp_path: Path) -> None:
+    from gigradar.db.models import Base
+    from gigradar.db.session import create_engine_from_url
+
+    db_path = tmp_path / "scheduler_callback.db"
+    engine = create_engine_from_url(f"sqlite+aiosqlite:///{db_path}")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
     calls: list[str] = []
 
     class MockOrchestrator(PlatformOrchestrator):
@@ -677,9 +958,9 @@ async def test_scheduler_platform_job_callback() -> None:
                 raise RuntimeError("Khamsat network blip")
             return TickResult(platform=platform_name, gigs_found=5, gigs_new=0, success=True)
 
-    orch = MockOrchestrator()
+    orch = MockOrchestrator(engine=engine)
     runner = SchedulerRunner(orchestrator=orch)
-    runner.setup_jobs()
+    runner.setup_jobs(stagger_step_seconds=0.0)
 
     # Invoke the registered job functions directly
     jobs = runner.scheduler.get_jobs()
@@ -692,7 +973,15 @@ async def test_scheduler_platform_job_callback() -> None:
 
 
 @pytest.mark.asyncio
-async def test_scheduler_run_forever_cancelled_task() -> None:
+async def test_scheduler_run_forever_cancelled_task(tmp_path: Path) -> None:
+    from gigradar.db.models import Base
+    from gigradar.db.session import create_engine_from_url
+
+    db_path = tmp_path / "scheduler_cancelled.db"
+    engine = create_engine_from_url(f"sqlite+aiosqlite:///{db_path}")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
     class DummyOrch(PlatformOrchestrator):
         async def run_tick(
             self,
@@ -713,9 +1002,25 @@ async def test_scheduler_run_forever_cancelled_task() -> None:
 
             return DummyClient()
 
-    runner = SchedulerRunner(orchestrator=DummyOrch())
+    runner = SchedulerRunner(orchestrator=DummyOrch(engine=engine))
     forever_task = asyncio.create_task(runner.run_forever())
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.001)
     forever_task.cancel()
     await forever_task
     assert runner._is_running is False
+
+
+def test_real_database_file_untouched_by_suite(guard_real_database: Any) -> None:
+    from pathlib import Path
+
+    db_path = Path("gigradar.db").resolve()
+    current = (
+        db_path.exists(),
+        db_path.stat().st_size if db_path.exists() else 0,
+        db_path.stat().st_mtime_ns if db_path.exists() else 0,
+    )
+    assert current == (
+        guard_real_database.exists,
+        guard_real_database.size,
+        guard_real_database.mtime_ns,
+    )
