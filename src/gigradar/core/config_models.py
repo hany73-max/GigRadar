@@ -70,6 +70,7 @@ class ClaimsAllowlistConfig(ConfigBaseModel):
 # ------------------------------------------------------------------------------
 class RulesThresholds(ConfigBaseModel):
     min_budget_usd: float = 25.0
+    min_hourly_rate_usd: float = 15.0
     max_existing_bids: int = 30
     max_gig_age_minutes: int = 1440
 
@@ -87,6 +88,8 @@ class CategoryRules(ConfigBaseModel):
 class RulesConfig(ConfigBaseModel):
     thresholds: RulesThresholds = Field(default_factory=RulesThresholds)
     keyword_families: dict[str, KeywordFamily] = Field(default_factory=dict)
+    ambiguous_keywords: dict[str, str] = Field(default_factory=dict)
+    exclude_keywords: list[str] = Field(default_factory=list)
     hard_rejects: dict[str, list[str]] = Field(default_factory=dict)
     category_rules: CategoryRules = Field(default_factory=CategoryRules)
 
@@ -131,5 +134,6 @@ class PlatformsConfig(ConfigBaseModel):
 class ResolvedThresholds(ConfigBaseModel):
     max_existing_bids: int
     min_budget_usd: float
+    min_hourly_rate_usd: float = 15.0
     max_gig_age_minutes: int
     min_expected_listing_rows: int

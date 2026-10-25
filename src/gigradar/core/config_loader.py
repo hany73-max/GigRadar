@@ -19,6 +19,11 @@ from gigradar.core.settings import get_settings
 def _get_config_dir(config_dir: Path | None = None) -> Path:
     if config_dir is not None:
         return config_dir
+    import os
+
+    env_dir = os.environ.get("GIGRADAR_CONFIG_DIR")
+    if env_dir:
+        return Path(env_dir)
     return get_settings().config_dir
 
 
@@ -71,39 +76,41 @@ def load_platforms_config(config_dir: Path | None = None) -> PlatformsConfig:
 def resolve_platform_thresholds(
     platform_name: str, config_dir: Path | None = None
 ) -> ResolvedThresholds:
-    """Resolve platform thresholds by inheriting unset values (None) from rules.yaml."""
+    """Resolve platform thresholds by inheriting unset values (None) from rules.yaml.
+
+    Only 'platform not in config' falls back to rules.yaml defaults.
+    Any YAML syntax or validation error in config files propagates.
+    """
     rules_cfg = load_rules_config(config_dir)
     default_bids = rules_cfg.thresholds.max_existing_bids
     default_budget = rules_cfg.thresholds.min_budget_usd
+    default_hourly = rules_cfg.thresholds.min_hourly_rate_usd
     default_age = rules_cfg.thresholds.max_gig_age_minutes
     default_min_rows = 5
 
-    try:
-        platforms_cfg = load_platforms_config(config_dir)
-        norm_name = platform_name.strip().lower()
-        plat = platforms_cfg.platforms.get(norm_name)
-        if plat is not None:
-            pt = plat.thresholds
-            return ResolvedThresholds(
-                max_existing_bids=pt.max_existing_bids
-                if pt.max_existing_bids is not None
-                else default_bids,
-                min_budget_usd=pt.min_budget_usd
-                if pt.min_budget_usd is not None
-                else default_budget,
-                max_gig_age_minutes=pt.max_gig_age_minutes
-                if pt.max_gig_age_minutes is not None
-                else default_age,
-                min_expected_listing_rows=pt.min_expected_listing_rows
-                if pt.min_expected_listing_rows is not None
-                else default_min_rows,
-            )
-    except Exception:
-        pass
+    platforms_cfg = load_platforms_config(config_dir)
+    norm_name = platform_name.strip().lower()
+    plat = platforms_cfg.platforms.get(norm_name)
+    if plat is not None:
+        pt = plat.thresholds
+        return ResolvedThresholds(
+            max_existing_bids=pt.max_existing_bids
+            if pt.max_existing_bids is not None
+            else default_bids,
+            min_budget_usd=pt.min_budget_usd if pt.min_budget_usd is not None else default_budget,
+            min_hourly_rate_usd=default_hourly,
+            max_gig_age_minutes=pt.max_gig_age_minutes
+            if pt.max_gig_age_minutes is not None
+            else default_age,
+            min_expected_listing_rows=pt.min_expected_listing_rows
+            if pt.min_expected_listing_rows is not None
+            else default_min_rows,
+        )
 
     return ResolvedThresholds(
         max_existing_bids=default_bids,
         min_budget_usd=default_budget,
+        min_hourly_rate_usd=default_hourly,
         max_gig_age_minutes=default_age,
         min_expected_listing_rows=default_min_rows,
     )

@@ -176,3 +176,114 @@ def test_cli_scrape_once_freelancer(monkeypatch: pytest.MonkeyPatch) -> None:
     result_all = runner.invoke(app, ["scrape-once", "freelancer", "--limit", "1", "--all"])
     assert result_all.exit_code == 0
     assert "40773380" in result_all.stdout
+
+
+def test_cli_classify_stored_and_rules_report() -> None:
+    """Test classify-stored, rules-report, and explain-gig end-to-end against isolated DB."""
+    import asyncio
+
+    from gigradar.db.models import Gig, utc_now
+    from gigradar.db.repositories.platform_repo import PlatformRepository
+    from gigradar.db.session import get_async_session
+
+    async def _seed_data() -> None:
+        async with get_async_session() as session:
+            p_repo = PlatformRepository(session)
+            plat_mostaql, _ = await p_repo.get_or_create("mostaql", "https://mostaql.com")
+            plat_khamsat, _ = await p_repo.get_or_create("khamsat", "https://khamsat.com")
+
+            # 1. Pass gig (ML)
+            gig_pass = Gig(
+                platform_id=plat_mostaql.id,
+                external_id="11111",
+                url="https://mostaql.com/project/11111",
+                title="تدريب نموذج تصنيف بيانات باستخدام scikit-learn",
+                description="مشروع تعلم آلي متقدم",
+                budget_max_usd=100.0,
+                bids_count=5,
+                posted_at=utc_now(),
+                detail_level="full",
+                processing_state="detail_fetched",
+                first_seen_at=utc_now(),
+                last_seen_at=utc_now(),
+            )
+            # 2. Reject gig (Academic)
+            gig_reject = Gig(
+                platform_id=plat_mostaql.id,
+                external_id="22222",
+                url="https://mostaql.com/project/22222",
+                title="حل واجب جامعي لمادة بايثون",
+                description="واجب منزلي",
+                budget_max_usd=50.0,
+                bids_count=2,
+                posted_at=utc_now(),
+                detail_level="full",
+                processing_state="detail_fetched",
+                first_seen_at=utc_now(),
+                last_seen_at=utc_now(),
+            )
+            # 3. Khamsat title-only pass
+            gig_khamsat = Gig(
+                platform_id=plat_khamsat.id,
+                external_id="33333",
+                url="https://khamsat.com/message/33333",
+                title="خوارزمية ذكاء اصطناعي وتحليل بيانات",
+                description=None,
+                budget_max_usd=None,
+                bids_count=None,
+                posted_at=utc_now(),
+                detail_level="title_only",
+                processing_state="detail_fetched",
+                first_seen_at=utc_now(),
+                last_seen_at=utc_now(),
+            )
+            session.add_all([gig_pass, gig_reject, gig_khamsat])
+            await session.commit()
+
+    asyncio.run(_seed_data())
+
+    # 1. Test classify-stored
+    res_classify = runner.invoke(app, ["classify-stored"])
+    assert res_classify.exit_code == 0
+    assert "Stage 1 Rules Classifier" in res_classify.stdout
+    assert "PASS" in res_classify.stdout
+    assert "REJECT" in res_classify.stdout
+    assert "11111" in res_classify.stdout
+    assert "22222" in res_classify.stdout
+    assert "33333" in res_classify.stdout
+    assert "Passed: 2" in res_classify.stdout
+    assert "Rejected: 1" in res_classify.stdout
+
+    # 2. Test classify-stored with --reclassify
+    res_reclassify = runner.invoke(app, ["classify-stored", "--reclassify"])
+    assert res_reclassify.exit_code == 0
+    assert "Classification Complete" in res_reclassify.stdout
+
+    # 3. Test rules-report
+    res_report = runner.invoke(app, ["rules-report"])
+    assert res_report.exit_code == 0
+    assert "Stage 1 Rules Classification Report" in res_report.stdout
+    assert "Platform Pass / Reject Rates" in res_report.stdout
+    assert "mostaql" in res_report.stdout
+    assert "khamsat" in res_report.stdout
+    assert "Top 10 Reject Reasons Overall" in res_report.stdout
+    assert "ALL Passed Gigs" in res_report.stdout
+
+    # 4. Test explain-gig
+    res_explain = runner.invoke(app, ["explain-gig", "mostaql", "11111"])
+    assert res_explain.exit_code == 0
+    assert "Gig Rules Explanation" in res_explain.stdout
+    assert "11111" in res_explain.stdout
+    assert "PASSED Stage 1 Rules Filter" in res_explain.stdout
+    assert "include:ml_dl:" in res_explain.stdout
+
+    # 5. Test explain-gig for reject
+    res_explain_rej = runner.invoke(app, ["explain-gig", "mostaql", "22222"])
+    assert res_explain_rej.exit_code == 0
+    assert "REJECTED" in res_explain_rej.stdout
+    assert "hard_reject:academic" in res_explain_rej.stdout
+
+    # 6. Test explain-gig non-existent
+    res_explain_404 = runner.invoke(app, ["explain-gig", "mostaql", "999999"])
+    assert res_explain_404.exit_code == 1
+    assert "not found" in res_explain_404.stdout

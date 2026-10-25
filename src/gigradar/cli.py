@@ -710,5 +710,377 @@ def run_cmd(
         console.print("\n[yellow]Shutdown requested by user (Ctrl+C). Exiting cleanly.[/yellow]\n")
 
 
+# ------------------------------------------------------------------------------
+# Phase 3: Stage 1 Rules Classification & Reporting CLI
+# ------------------------------------------------------------------------------
+@app.command(name="classify-stored")
+def classify_stored(
+    platform: str | None = typer.Option(
+        None,
+        "--platform",
+        "-p",
+        help="Filter stored gigs by platform name (mostaql, khamsat, freelancer).",
+    ),
+    limit: int | None = typer.Option(
+        None,
+        "--limit",
+        "-l",
+        help="Maximum number of stored gigs to classify.",
+    ),
+    reclassify: bool = typer.Option(
+        False,
+        "--reclassify",
+        help="Reclassify previously classified gigs (appends new classification, stale gigs skipped).",
+    ),
+) -> None:
+    """Replay Stage 1 rules filter over stored gigs and print pass/reject with reasons."""
+    import asyncio
+
+    from gigradar.classify.rules_filter import RulesFilter
+    from gigradar.db.repositories.gig_repo import GigRepository
+    from gigradar.db.repositories.platform_repo import PlatformRepository
+    from gigradar.db.session import get_async_session
+
+    async def _run() -> None:
+        rules_filter = RulesFilter()
+        console.print(
+            f"\n[bold cyan]Stage 1 Rules Classifier[/bold cyan] (rules_version=[green]{rules_filter.rules_version}[/green])\n"
+        )
+
+        async with get_async_session() as session:
+            gig_repo = GigRepository(session)
+            platform_repo = PlatformRepository(session)
+
+            plat_id: int | None = None
+            if platform:
+                norm_plat = platform.strip().lower()
+                plat_obj = await platform_repo.get_by_name(norm_plat)
+                if plat_obj is None:
+                    console.print(
+                        f"[bold red]Platform '{platform}' not found in database.[/bold red]"
+                    )
+                    raise typer.Exit(code=1)
+                plat_id = plat_obj.id
+
+            gigs = await gig_repo.get_gigs_for_rules_classification(
+                platform_id=plat_id,
+                limit=limit,
+                reclassify=reclassify,
+            )
+
+            if not gigs:
+                console.print(
+                    "[yellow]No gigs found matching criteria. Use --reclassify to replay all non-stale gigs.[/yellow]\n"
+                )
+                return
+
+            console.print(f"Evaluating [bold]{len(gigs)}[/bold] stored gig(s)...\n")
+
+            passed_count = 0
+            rejected_count = 0
+
+            for gig in gigs:
+                plat_name = gig.platform.name if gig.platform else "default"
+                res = rules_filter.evaluate(gig, platform_name=plat_name)
+
+                await gig_repo.record_classification(
+                    gig_id=gig.id,
+                    stage="rules",
+                    passed=res.passed,
+                    rule_hits=res.hits,
+                    reject_reason=res.reject_reason,
+                    flags=res.flags,
+                    rules_version=rules_filter.rules_version,
+                )
+
+                title_snippet = (gig.title[:60] + "...") if len(gig.title) > 60 else gig.title
+                if res.passed:
+                    passed_count += 1
+                    status_badge = "[bold green]PASS[/bold green]"
+                    details = ", ".join(res.hits[:3])
+                else:
+                    rejected_count += 1
+                    status_badge = "[bold red]REJECT[/bold red]"
+                    details = res.reject_reason or "unknown"
+
+                console.print(
+                    f"{status_badge} [{plat_name}] [cyan]#{gig.external_id}[/cyan] {title_snippet} -> [dim]{details}[/dim]"
+                )
+
+            await session.commit()
+
+            console.print(
+                f"\n[bold]Classification Complete:[/bold] Total: {len(gigs)} | "
+                f"[green]Passed: {passed_count}[/green] | "
+                f"[red]Rejected: {rejected_count}[/red]\n"
+            )
+
+    asyncio.run(_run())
+
+
+@app.command(name="rules-report")
+def rules_report() -> None:
+    """Print counts by reject reason per platform, pass rate, passes/24h estimate, sample of 30 rejected titles, and ALL passed titles."""
+    import asyncio
+    import random
+    from collections import Counter
+
+    from gigradar.db.repositories.gig_repo import GigRepository
+    from gigradar.db.session import get_async_session
+
+    async def _run() -> None:
+        async with get_async_session() as session:
+            gig_repo = GigRepository(session)
+            classified_pairs = await gig_repo.get_all_classified_gigs()
+
+        if not classified_pairs:
+            console.print(
+                "\n[yellow]No classified gigs found. Run 'gigradar classify-stored --reclassify' first.[/yellow]\n"
+            )
+            return
+
+        total_gigs = len(classified_pairs)
+        passed_pairs = [(g, c) for g, c in classified_pairs if c.passed]
+        rejected_pairs = [(g, c) for g, c in classified_pairs if not c.passed]
+
+        # Per platform stats
+        platform_counts: dict[str, dict[str, int]] = {}
+        reject_reasons_per_platform: dict[str, Counter[str]] = {}
+        all_reject_reasons: Counter[str] = Counter()
+
+        earliest_time: datetime | None = None
+        latest_time: datetime | None = None
+
+        for gig, classification in classified_pairs:
+            p_name = gig.platform.name if gig.platform else "default"
+            if p_name not in platform_counts:
+                platform_counts[p_name] = {"total": 0, "passed": 0, "rejected": 0}
+                reject_reasons_per_platform[p_name] = Counter()
+
+            platform_counts[p_name]["total"] += 1
+            if classification.passed:
+                platform_counts[p_name]["passed"] += 1
+            else:
+                platform_counts[p_name]["rejected"] += 1
+                reason = classification.reject_reason or "unknown"
+                reject_reasons_per_platform[p_name][reason] += 1
+                all_reject_reasons[reason] += 1
+
+            # Time span calculation
+            time_ref = gig.posted_at or gig.first_seen_at
+            if time_ref is not None:
+                if earliest_time is None or time_ref < earliest_time:
+                    earliest_time = time_ref
+                if latest_time is None or time_ref > latest_time:
+                    latest_time = time_ref
+
+        # Time span & passes per 24 hours estimate
+        hours_span = 24.0
+        if earliest_time and latest_time:
+            delta_seconds = max(60.0, (latest_time - earliest_time).total_seconds())
+            hours_span = max(1.0, delta_seconds / 3600.0)
+
+        passes_per_24h = (len(passed_pairs) / hours_span) * 24.0
+
+        console.print("\n[bold cyan]=== Stage 1 Rules Classification Report ===[/bold cyan]\n")
+        console.print(
+            f"Total stored classified gigs: [bold]{total_gigs}[/bold] "
+            f"(Passed: [bold green]{len(passed_pairs)}[/bold green], "
+            f"Rejected: [bold red]{len(rejected_pairs)}[/bold red], "
+            f"Pass Rate: [bold cyan]{(len(passed_pairs) / total_gigs * 100):.1f}%[/bold cyan])"
+        )
+        console.print(
+            f"Time span covered: [bold]{hours_span:.1f} hours[/bold] | "
+            f"Estimated passes / 24h: [bold green]{passes_per_24h:.1f}[/bold green]\n"
+        )
+
+        # Platform summary table
+        plat_table = Table(
+            title="Platform Pass / Reject Rates", show_header=True, header_style="bold magenta"
+        )
+        plat_table.add_column("Platform", style="cyan")
+        plat_table.add_column("Total Gigs", justify="right")
+        plat_table.add_column("Passed", justify="right", style="green")
+        plat_table.add_column("Rejected", justify="right", style="red")
+        plat_table.add_column("Pass Rate", justify="right", style="bold")
+
+        for p_name, counts in sorted(platform_counts.items()):
+            rate = (counts["passed"] / counts["total"] * 100) if counts["total"] > 0 else 0.0
+            plat_table.add_row(
+                p_name,
+                str(counts["total"]),
+                str(counts["passed"]),
+                str(counts["rejected"]),
+                f"{rate:.1f}%",
+            )
+        console.print(plat_table)
+        console.print()
+
+        # Top 10 Reject Reasons Overall
+        top_reject_table = Table(
+            title="Top 10 Reject Reasons Overall", show_header=True, header_style="bold magenta"
+        )
+        top_reject_table.add_column("Reject Reason", style="yellow")
+        top_reject_table.add_column("Count", justify="right")
+        top_reject_table.add_column("% of Rejects", justify="right")
+
+        for reason, count in all_reject_reasons.most_common(10):
+            pct = (count / len(rejected_pairs) * 100) if rejected_pairs else 0.0
+            top_reject_table.add_row(reason, str(count), f"{pct:.1f}%")
+        console.print(top_reject_table)
+        console.print()
+
+        # Sample of up to 30 random rejected titles
+        sample_size = min(30, len(rejected_pairs))
+        sampled_rejected = (
+            random.sample(rejected_pairs, sample_size)
+            if len(rejected_pairs) > sample_size
+            else rejected_pairs
+        )
+        sample_table = Table(
+            title=f"Sample of {sample_size} Rejected Gigs",
+            show_header=True,
+            header_style="bold magenta",
+        )
+        sample_table.add_column("Platform", style="cyan", width=12)
+        sample_table.add_column("Title", style="white", width=55)
+        sample_table.add_column("Main Reject Reason", style="red")
+
+        for gig, classification in sampled_rejected:
+            p_name = gig.platform.name if gig.platform else "default"
+            t_short = (gig.title[:52] + "...") if len(gig.title) > 52 else gig.title
+            sample_table.add_row(p_name, t_short, classification.reject_reason or "unknown")
+        console.print(sample_table)
+        console.print()
+
+        # ALL Passed Titles
+        passed_table = Table(
+            title=f"ALL Passed Gigs ({len(passed_pairs)} total)",
+            show_header=True,
+            header_style="bold magenta",
+        )
+        passed_table.add_column("Platform", style="cyan", width=12)
+        passed_table.add_column("Budget", style="yellow", width=14)
+        passed_table.add_column("Title", style="green", width=50)
+        passed_table.add_column("Key Hits", style="dim")
+
+        for gig, classification in passed_pairs:
+            p_name = gig.platform.name if gig.platform else "default"
+            b_str = (
+                f"${gig.budget_max_usd:.0f}"
+                if gig.budget_max_usd is not None
+                else (f"${gig.budget_usd_est:.0f}" if gig.budget_usd_est is not None else "N/A")
+            )
+            t_short = (gig.title[:47] + "...") if len(gig.title) > 47 else gig.title
+            hits = classification.rule_hits_json or []
+            # filter for informative include hits
+            inc_hits = [h for h in hits if h.startswith("include:") or h.startswith("ambiguous:")]
+            inc_text = ", ".join(inc_hits[:3]) if inc_hits else ", ".join(hits[:2])
+            passed_table.add_row(p_name, b_str, t_short, inc_text)
+        console.print(passed_table)
+        console.print()
+
+    asyncio.run(_run())
+
+
+@app.command(name="explain-gig")
+def explain_gig(
+    platform: str = typer.Argument(..., help="Platform name (mostaql, khamsat, freelancer)."),
+    external_id: str = typer.Argument(..., help="External ID of the gig."),
+) -> None:
+    """Print complete rules filter evaluation and explanation for a single stored gig."""
+    import asyncio
+
+    from gigradar.classify.rules_filter import RulesFilter
+    from gigradar.db.repositories.gig_repo import GigRepository
+    from gigradar.db.repositories.platform_repo import PlatformRepository
+    from gigradar.db.session import get_async_session
+
+    async def _run() -> None:
+        rules_filter = RulesFilter()
+        async with get_async_session() as session:
+            gig_repo = GigRepository(session)
+            platform_repo = PlatformRepository(session)
+
+            norm_plat = platform.strip().lower()
+            plat_obj = await platform_repo.get_by_name(norm_plat)
+            if plat_obj is None:
+                console.print(f"[bold red]Platform '{platform}' not found in database.[/bold red]")
+                raise typer.Exit(code=1)
+
+            gig = await gig_repo.get_by_external_id(plat_obj.id, external_id.strip())
+            if gig is None:
+                console.print(
+                    f"[bold red]Gig with external_id '{external_id}' not found on platform '{platform}'.[/bold red]"
+                )
+                raise typer.Exit(code=1)
+
+            latest_cls = await gig_repo.get_latest_classification(gig.id, stage="rules")
+
+            # Run deterministic evaluation
+            res = rules_filter.evaluate(gig, platform_name=norm_plat)
+
+        console.print("\n[bold cyan]=== Gig Rules Explanation ===[/bold cyan]\n")
+        console.print(
+            f"[bold]Platform:[/bold] {norm_plat} | [bold]External ID:[/bold] {gig.external_id}"
+        )
+        console.print(f"[bold]Title:[/bold] {gig.title}")
+        console.print(f"[bold]URL:[/bold] {gig.url}")
+        console.print(
+            f"[bold]Detail Level:[/bold] {gig.detail_level} | [bold]Processing State:[/bold] {gig.processing_state}"
+        )
+
+        # Budget info
+        b_max = gig.budget_max_usd or gig.budget_usd_est
+        b_str = f"${b_max:.2f}" if b_max is not None else "Unknown"
+        console.print(
+            f"[bold]Project Type:[/bold] {gig.project_type} | [bold]Budget Max USD:[/bold] {b_str} "
+            f"(Raw: {gig.budget_min}-{gig.budget_max} {gig.currency or ''})"
+        )
+        console.print(
+            f"[bold]Bids Count:[/bold] {gig.bids_count} | [bold]Posted At:[/bold] {gig.posted_at}"
+        )
+        console.print(f"[bold]Category:[/bold] {gig.category_raw or 'None'}")
+        if gig.tags_raw_json:
+            console.print(f"[bold]Tags:[/bold] {', '.join(gig.tags_raw_json)}")
+
+        console.print("\n[bold]Current Evaluation Result:[/bold]")
+        if res.passed:
+            console.print("[bold green]✔ PASSED Stage 1 Rules Filter[/bold green]")
+        else:
+            console.print(
+                f"[bold red]✘ REJECTED[/bold red] - Reason: [yellow]{res.reject_reason}[/yellow]"
+            )
+
+        if res.flags:
+            console.print(
+                f"[bold cyan]Flags / Hints for Stage 2:[/bold cyan] {', '.join(res.flags)}"
+            )
+
+        console.print("\n[bold]Recorded Rule Hits:[/bold]")
+        for h in res.hits:
+            if h.startswith("hard_reject:"):
+                console.print(f"  • [red]{h}[/red]")
+            elif h.startswith("include:"):
+                console.print(f"  • [green]{h}[/green]")
+            elif h.startswith("ambiguous:"):
+                console.print(f"  • [yellow]{h}[/yellow]")
+            elif "ok" in h:
+                console.print(f"  • [cyan]{h}[/cyan]")
+            else:
+                console.print(f"  • {h}")
+
+        if latest_cls is not None:
+            console.print("\n[bold]Latest Database Classification Record:[/bold]")
+            console.print(
+                f"  Stage: {latest_cls.stage} | Passed: {latest_cls.passed} | "
+                f"Rules Version: {latest_cls.rules_version} | "
+                f"Classified At: {latest_cls.created_at}"
+            )
+        console.print()
+
+    asyncio.run(_run())
+
+
 if __name__ == "__main__":
     app()

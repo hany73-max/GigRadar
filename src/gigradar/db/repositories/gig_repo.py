@@ -8,7 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from gigradar.core.models import Gig as DomainGig
 from gigradar.core.models import GigStub
-from gigradar.db.models import Gig, GigSnapshot, Platform, utc_now
+from gigradar.db.models import Classification, Gig, GigSnapshot, Platform, utc_now
 
 
 class GigRepository:
@@ -250,3 +250,116 @@ class GigRepository:
             "by_platform": by_platform,
             "by_state": by_state,
         }
+
+    async def record_classification(
+        self,
+        gig_id: int,
+        stage: str,
+        passed: bool,
+        rule_hits: list[str],
+        reject_reason: str | None = None,
+        flags: list[str] | None = None,
+        rules_version: str | None = None,
+    ) -> tuple[Gig, Classification]:
+        """Record a classification row and update gig processing_state.
+
+        Provenance: Always appends a new row to `classifications` table.
+        Safety invariant: If the gig is already 'stale', its processing_state is NEVER
+        overwritten to rules_passed/rules_rejected.
+        """
+        gig = await self.get_by_id(gig_id)
+        if gig is None:
+            raise ValueError(f"Cannot classify non-existent gig #{gig_id}")
+
+        now = utc_now()
+        classification = Classification(
+            gig_id=gig.id,
+            stage=stage,
+            passed=passed,
+            rule_hits_json=rule_hits,
+            reject_reason=reject_reason,
+            flags_json=flags,
+            rules_version=rules_version,
+            created_at=now,
+        )
+        self.session.add(classification)
+
+        # Do NOT change state if gig is stale!
+        if gig.processing_state != "stale":
+            gig.processing_state = "rules_passed" if passed else "rules_rejected"
+
+        gig.last_seen_at = now
+        await self.session.flush()
+        return gig, classification
+
+    async def get_latest_classification(
+        self, gig_id: int, stage: str = "rules"
+    ) -> Classification | None:
+        """Fetch the most recent classification record for a gig and stage."""
+        result = await self.session.execute(
+            select(Classification)
+            .where(
+                Classification.gig_id == gig_id,
+                Classification.stage == stage,
+            )
+            .order_by(Classification.created_at.desc(), Classification.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_gigs_for_rules_classification(
+        self,
+        platform_id: int | None = None,
+        limit: int | None = None,
+        reclassify: bool = False,
+    ) -> list[Gig]:
+        """Retrieve gigs ready for Stage 1 rules classification.
+
+        If reclassify is False: picks gigs in 'detail_fetched' state (excluding 'stale').
+        If reclassify is True: picks all non-stale gigs.
+        """
+        query = select(Gig).options(selectinload(Gig.platform))
+
+        if platform_id is not None:
+            query = query.where(Gig.platform_id == platform_id)
+
+        # Safety: never classify or reclassify stale gigs
+        query = query.where(Gig.processing_state != "stale")
+
+        if not reclassify:
+            query = query.where(Gig.processing_state == "detail_fetched")
+
+        query = query.order_by(Gig.id.asc())
+
+        if limit is not None:
+            query = query.limit(limit)
+
+        result = await self.session.execute(query)
+        return list(result.scalars().all())
+
+    async def get_all_classified_gigs(
+        self, platform_id: int | None = None
+    ) -> list[tuple[Gig, Classification]]:
+        """Retrieve all non-stale gigs with their latest rules classification."""
+        query = (
+            select(Gig, Classification)
+            .options(selectinload(Gig.platform))
+            .join(Classification, Classification.gig_id == Gig.id)
+            .where(Classification.stage == "rules")
+            .where(Gig.processing_state != "stale")
+        )
+        if platform_id is not None:
+            query = query.where(Gig.platform_id == platform_id)
+
+        query = query.order_by(Classification.created_at.desc())
+        result = await self.session.execute(query)
+        rows = result.all()
+
+        # Deduplicate keeping latest classification per gig
+        seen_gig_ids: set[int] = set()
+        deduped: list[tuple[Gig, Classification]] = []
+        for g, c in rows:
+            if g.id not in seen_gig_ids:
+                seen_gig_ids.add(g.id)
+                deduped.append((g, c))
+        return deduped

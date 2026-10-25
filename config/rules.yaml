@@ -1,5 +1,6 @@
 thresholds:
   min_budget_usd: 25.0
+  min_hourly_rate_usd: 15.0
   max_existing_bids: 30
   max_gig_age_minutes: 1440 # 24 hours
 
@@ -96,15 +97,44 @@ keyword_families:
       - "نشر نموذج"
       - "docker"
 
+ambiguous_keywords:
+  "نموذج": "ambiguous_ml_model"
+  "تدريب": "ambiguous_training"
+  "ذكاء اصطناعي": "ambiguous_ai_imagery"
+  "chatbot": "likely_llm_wrapper"
+  "شات بوت": "likely_llm_wrapper"
+
+exclude_keywords:
+  - "data entry"
+  - "إدخال بيانات"
+  - "ادخال بيانات"
+  - "كتابة مقالات"
+  - "content writing"
+  - "graphic design"
+  - "تصميم جرافيك"
+  - "video editing"
+  - "مونتاج فيديو"
+  - "seo specialist"
+  - "social media manager"
+  - "إدارة حسابات"
+  - "ادارة حسابات"
+  - "voice over"
+  - "تعليق صوتي"
+  - "virtual assistant"
+  - "مساعد افتراضي"
+
 hard_rejects:
   academic:
     - "واجب"
     - "مشروع تخرج"
     - "بحث جامعي"
     - "امتحان"
-    - "اختبار"
+    - "حل اختبار"
+    - "اختبار جامعي"
+    - "اختبارات جامعية"
     - "رسالة ماجستير"
     - "أطروحة"
+    - "اطروحة"
     - "homework"
     - "assignment"
     - "thesis"
@@ -112,11 +142,15 @@ hard_rejects:
     - "exam"
     - "university project"
     - "college assignment"
+    - "حل واجبات"
+    - "مشروع تخرج جامعي"
+    - "حل اسئلة"
 
   unpaid_or_trial:
     - "عينة مجانية"
     - "تجربة مجانية"
     - "مهمة تجريبية بدون مقابل"
+    - "عمل تجريبي بدون مقابل"
     - "free sample"
     - "free trial"
     - "test task without payment"
@@ -128,17 +162,31 @@ hard_rejects:
     - "بوت سبام"
     - "اختراق"
     - "تخطي الحظر"
+    - "اختراق حسابات"
     - "fake reviews"
     - "spam bot"
     - "account farming"
     - "bypass captcha"
     - "hack"
     - "crack"
+    - "scraping personal data"
+
+  guaranteed_accuracy:
+    - "دقة 99%"
+    - "دقة 100%"
+    - "100% مضمون"
+    - "نسبة دقة 99%"
+    - "99% accuracy"
+    - "100% accuracy"
+    - "guaranteed accuracy"
+    - "ضمان دقة"
 
   pure_irrelevant:
     - "wordpress"
     - "shopify"
     - "woocommerce"
+    - "ووردبريس"
+    - "شوبيفاي"
     - "تصميم لوجو"
     - "كتابة محتوى"
     - "ترجمة كتب"
@@ -148,6 +196,9 @@ hard_rejects:
     - "react native"
     - "swift"
     - "kotlin"
+    - "تسويق الكتروني"
+    - "ادارة حملات اعلانية"
+    - "ادخال منتجات"
 
 category_rules:
   deny_categories:
@@ -155,8 +206,11 @@ category_rules:
     - "Writing & Translation"
     - "Mobile App Development"
     - "Business Services"
+    - "Sales & Marketing"
+    - "Video & Animation"
   allow_categories:
     - "Data Science & Analysis"
     - "Artificial Intelligence & Machine Learning"
     - "Software Development"
     - "Web Scraping"
+    - "Database Administration"

@@ -144,7 +144,7 @@ async def test_first_run_mix_of_fresh_and_old_gigs(
         g_unknown = await gig_repo.get_by_external_id(1, "unknown_1")
 
         assert g_fresh is not None
-        assert g_fresh.processing_state == "detail_fetched"
+        assert g_fresh.processing_state in ("rules_passed", "rules_rejected")
         assert g_fresh.description == "Full project description"
 
         assert g_old is not None
@@ -152,7 +152,7 @@ async def test_first_run_mix_of_fresh_and_old_gigs(
         assert g_old.budget_usd_est is None  # Detail was not fetched
 
         assert g_unknown is not None
-        assert g_unknown.processing_state == "detail_fetched"
+        assert g_unknown.processing_state in ("rules_passed", "rules_rejected")
 
 
 @pytest.mark.asyncio
@@ -239,7 +239,7 @@ async def test_khamsat_out_of_order_listing_no_early_exit(
         gig_repo = GigRepository(session)
         g_new = await gig_repo.get_by_external_id(1, "new_600")
         assert g_new is not None
-        assert g_new.processing_state == "detail_fetched"
+        assert g_new.processing_state in ("rules_passed", "rules_rejected")
 
 
 @pytest.mark.asyncio
@@ -283,7 +283,7 @@ async def test_crash_safety_tick_killed_halfway_completed_by_next_tick(
         gig_repo = GigRepository(session)
         recovered_gig = await gig_repo.get_by_external_id(1, "crash_proj_1")
         assert recovered_gig is not None
-        assert recovered_gig.processing_state == "detail_fetched"
+        assert recovered_gig.processing_state in ("rules_passed", "rules_rejected")
         assert recovered_gig.description == "Full project description"
 
 
@@ -377,10 +377,10 @@ async def test_concurrent_platform_ticks_no_database_locked(tmp_path: Path) -> N
             f1 = await repo.get_by_external_id(p_f.id, "f_1")
             f2 = await repo.get_by_external_id(p_f.id, "f_2")
 
-            assert m1 is not None and m1.processing_state == "detail_fetched"
-            assert m2 is not None and m2.processing_state == "detail_fetched"
-            assert f1 is not None and f1.processing_state == "detail_fetched"
-            assert f2 is not None and f2.processing_state == "detail_fetched"
+            assert m1 is not None and m1.processing_state in ("rules_passed", "rules_rejected")
+            assert m2 is not None and m2.processing_state in ("rules_passed", "rules_rejected")
+            assert f1 is not None and f1.processing_state in ("rules_passed", "rules_rejected")
+            assert f2 is not None and f2.processing_state in ("rules_passed", "rules_rejected")
     finally:
         await engine.dispose()
 
@@ -437,7 +437,7 @@ async def test_exception_after_first_detail_fetch_retains_completed_gigs(tmp_pat
             # proj_1 was committed immediately after its detail fetch
             p1 = await repo.get_by_external_id(1, "proj_1")
             assert p1 is not None
-            assert p1.processing_state == "detail_fetched"
+            assert p1.processing_state in ("rules_passed", "rules_rejected")
 
             # proj_2 was committed in the batch upsert as 'new'
             p2 = await repo.get_by_external_id(1, "proj_2")
@@ -456,7 +456,7 @@ async def test_exception_after_first_detail_fetch_retains_completed_gigs(tmp_pat
             repo = GigRepository(session)
             p2_done = await repo.get_by_external_id(1, "proj_2")
             assert p2_done is not None
-            assert p2_done.processing_state == "detail_fetched"
+            assert p2_done.processing_state in ("rules_passed", "rules_rejected")
     finally:
         await engine.dispose()
 

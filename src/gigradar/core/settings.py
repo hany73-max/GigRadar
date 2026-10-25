@@ -1,8 +1,9 @@
 """Application settings and environment configuration."""
 
+import os
 from pathlib import Path
 
-from pydantic import Field, SecretStr
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -50,7 +51,14 @@ class Settings(BaseSettings):
     # Logging and paths
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     log_format: str = Field(default="console", alias="LOG_FORMAT")
-    config_dir: Path = Field(default=Path("config"), alias="CONFIG_DIR")
+    config_dir: Path = Field(
+        default_factory=lambda: Path(
+            os.environ.get("GIGRADAR_CONFIG_DIR")
+            or os.environ.get("CONFIG_DIR")
+            or (Path(__file__).resolve().parents[3] / "config")
+        ),
+        validation_alias=AliasChoices("GIGRADAR_CONFIG_DIR", "CONFIG_DIR"),
+    )
 
 
 _settings: Settings | None = None

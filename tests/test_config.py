@@ -118,3 +118,68 @@ def test_resolve_platform_thresholds_inheritance() -> None:
     assert resolved_unknown.min_budget_usd == 25.0
     assert resolved_unknown.max_gig_age_minutes == 1440
     assert resolved_unknown.min_expected_listing_rows == 5
+    assert resolved_unknown.min_hourly_rate_usd == 15.0
+
+
+def test_resolve_platform_thresholds_typo_fails_loudly(tmp_path: Path) -> None:
+    """H1: resolve_platform_thresholds must NOT swallow validation errors in platforms.yaml."""
+    from pydantic import ValidationError
+
+    from gigradar.core.config_loader import resolve_platform_thresholds
+
+    # Create valid rules.yaml
+    rules_content = """
+thresholds:
+  min_budget_usd: 25.0
+  min_hourly_rate_usd: 15.0
+  max_existing_bids: 30
+  max_gig_age_minutes: 1440
+"""
+    (tmp_path / "rules.yaml").write_text(rules_content, encoding="utf-8")
+
+    # Create platforms.yaml with a typo key
+    bad_platforms = """
+platforms:
+  testplat:
+    name: "testplat"
+    enabled: true
+    type: "scraper"
+    base_url: "https://example.com"
+    typo_unknown_key: "should_fail"
+"""
+    (tmp_path / "platforms.yaml").write_text(bad_platforms, encoding="utf-8")
+
+    with pytest.raises(ValidationError):
+        resolve_platform_thresholds("testplat", tmp_path)
+
+
+def test_config_dir_independent_of_cwd(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """H2: Default config dir does not depend on current working directory, and GIGRADAR_CONFIG_DIR overrides it."""
+    from gigradar.core.config_loader import load_rules_config
+    from gigradar.core.settings import reload_settings
+
+    # 1. Switch working directory to an arbitrary temporary directory
+    monkeypatch.chdir(tmp_path)
+    reload_settings()
+
+    # Should still find default project root config without error
+    rules = load_rules_config()
+    assert rules.thresholds.min_budget_usd >= 25.0
+
+    # 2. Test GIGRADAR_CONFIG_DIR override
+    custom_dir = tmp_path / "custom_config"
+    custom_dir.mkdir()
+    custom_rules = """
+thresholds:
+  min_budget_usd: 99.0
+  min_hourly_rate_usd: 40.0
+  max_existing_bids: 10
+  max_gig_age_minutes: 120
+"""
+    (custom_dir / "rules.yaml").write_text(custom_rules, encoding="utf-8")
+
+    monkeypatch.setenv("GIGRADAR_CONFIG_DIR", str(custom_dir))
+    reload_settings()
+    overridden_rules = load_rules_config()
+    assert overridden_rules.thresholds.min_budget_usd == 99.0
+    assert overridden_rules.thresholds.min_hourly_rate_usd == 40.0

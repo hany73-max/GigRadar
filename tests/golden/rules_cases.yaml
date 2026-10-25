@@ -1,0 +1,430 @@
+# Golden test cases for Stage 1 deterministic rules filter
+# Covers: Real ML, CV, NLP, Data Engineering, Scraping, Academic, Unpaid trial,
+# Policy violations, Guaranteed accuracy, Pure irrelevant web/mobile, Exclude keywords,
+# Ambiguous words, Clitic prefixes, Strict Latin boundaries, Title-only (Khamsat),
+# Fixed and hourly budgets, and Unknown budget/bids.
+
+cases:
+  # ---------------------------------------------------------------------------
+  # 1. Real ML & Classical Tabular ML
+  # ---------------------------------------------------------------------------
+  - id: "ml_tabular_churn"
+    title: "بناء نموذج تنبؤ بمغادرة العملاء باستخدام XGBoost"
+    description: "لدينا قاعدة بيانات عملاء في ملف CSV ونريد تدريب نموذج لتوقع مغادرة العملاء وضبط عتبة التصنيف بدقة."
+    platform: "mostaql"
+    detail_level: "full"
+    project_type: "fixed"
+    budget_max_usd: 150.0
+    expected_passed: true
+
+  - id: "ml_forecasting_timeseries"
+    title: "Time series forecasting for retail sales demand"
+    description: "Looking for an ML engineer to build a forecasting pipeline for daily sales using ARIMA or XGBoost."
+    platform: "freelancer"
+    detail_level: "full"
+    project_type: "fixed"
+    budget_max_usd: 250.0
+    expected_passed: true
+
+  - id: "ml_scikit_classification"
+    title: "تصنيف بيانات طبية باستخدام scikit-learn"
+    description: "مشروع يحتاج تصنيف مرضى وفق نتائج التحاليل، مع معالجة البيانات غير المتوازنة وتجربة خوارزميات مختلفة."
+    platform: "mostaql"
+    detail_level: "full"
+    project_type: "fixed"
+    budget_max_usd: 80.0
+    expected_passed: true
+
+  - id: "ml_anomaly_detection"
+    title: "Anomaly detection system for server network logs"
+    description: "We need an anomaly detection model in Python to identify suspicious traffic spikes in real time."
+    platform: "freelancer"
+    detail_level: "full"
+    project_type: "hourly"
+    budget_max_usd: 35.0
+    expected_passed: true
+
+  # ---------------------------------------------------------------------------
+  # 2. Computer Vision (CV) & Deep Learning
+  # ---------------------------------------------------------------------------
+  - id: "cv_yolo_detection"
+    title: "كشف الكائنات في فيديو مراقبة باستخدام YOLO"
+    description: "نريد تدريب وتطبيق خوارزمية YOLO لكشف وتتبع السيارات في مقاطع فيديو بدقة عالية."
+    platform: "mostaql"
+    detail_level: "full"
+    project_type: "fixed"
+    budget_max_usd: 300.0
+    expected_passed: true
+
+  - id: "cv_image_classification_pytorch"
+    title: "Fine-tune pretrained ResNet / PyTorch for defect classification"
+    description: "Need a computer vision specialist to fine-tune a PyTorch CNN model on manufacturing defect images."
+    platform: "freelancer"
+    detail_level: "full"
+    project_type: "fixed"
+    budget_max_usd: 200.0
+    expected_passed: true
+
+  - id: "cv_ocr_arabic_invoices"
+    title: "استخراج نصوص الفواتير بواسطة OCR في بايثون"
+    description: "تطوير سكربت OCR للتعرف على الحقول في الفواتير المصورة واستخراج الأرقام والتفاصيل."
+    platform: "mostaql"
+    detail_level: "full"
+    project_type: "fixed"
+    budget_max_usd: 120.0
+    expected_passed: true
+
+  # ---------------------------------------------------------------------------
+  # 3. NLP & Text Classification
+  # ---------------------------------------------------------------------------
+  - id: "nlp_arabic_sentiment"
+    title: "تحليل المشاعر للتغريدات العربية باستخدام Transformers"
+    description: "مشروع تصنيف نصوص لتحديد المشاعر الإيجابية والسلبية في التعليقات العربية باستخدام BERT."
+    platform: "mostaql"
+    detail_level: "full"
+    project_type: "fixed"
+    budget_max_usd: 100.0
+    expected_passed: true
+
+  - id: "nlp_rag_embeddings"
+    title: "Build RAG pipeline with vector embeddings and LLM"
+    description: "Implement a retrieval augmented generation pipeline querying local PDF documents using LangChain."
+    platform: "freelancer"
+    detail_level: "full"
+    project_type: "fixed"
+    budget_max_usd: 400.0
+    expected_passed: true
+
+  # ---------------------------------------------------------------------------
+  # 4. Data Engineering, ETL & Scraping
+  # ---------------------------------------------------------------------------
+  - id: "data_etl_pipeline"
+    title: "بناء خط أنابيب بيانات ETL باستخدام بايثون و PostgreSQL"
+    description: "سحب البيانات من مصادر متعددة وتنظيفها ثم تخزينها في قاعدة بيانات PostgreSQL مع SQLAlchemy."
+    platform: "mostaql"
+    detail_level: "full"
+    project_type: "fixed"
+    budget_max_usd: 150.0
+    expected_passed: true
+
+  - id: "data_web_scraping_ecommerce"
+    title: "Python web scraping for e-commerce catalog prices"
+    description: "Scrape product prices, titles, and categories from competitor websites into clean CSV format using Pandas."
+    platform: "freelancer"
+    detail_level: "full"
+    project_type: "fixed"
+    budget_max_usd: 75.0
+    expected_passed: true
+
+  - id: "data_streamlit_dashboard"
+    title: "لوحة تحكم تفاعلية لعرض البيانات باستخدام Streamlit"
+    description: "تصميم dashboard في Streamlit لتحليل بيانات المبيعات وعرض المخططات الإحصائية."
+    platform: "mostaql"
+    detail_level: "full"
+    project_type: "fixed"
+    budget_max_usd: 90.0
+    expected_passed: true
+
+  # ---------------------------------------------------------------------------
+  # 5. Backend & Deployment
+  # ---------------------------------------------------------------------------
+  - id: "backend_fastapi_deploy"
+    title: "FastAPI REST API to deploy model in Docker"
+    description: "Wrap an existing machine learning model in a FastAPI endpoint and package it into a Docker container."
+    platform: "freelancer"
+    detail_level: "full"
+    project_type: "fixed"
+    budget_max_usd: 180.0
+    expected_passed: true
+
+  # ---------------------------------------------------------------------------
+  # 6. Hard Rejects: Academic / Homework / Thesis
+  # ---------------------------------------------------------------------------
+  - id: "academic_homework_arabic"
+    title: "حل واجب بايثون لمادة الذكاء الاصطناعي"
+    description: "مطلوب طالب متميز لحل واجب جامعي مكون من 4 مسائل في خوارزميات البحث."
+    platform: "mostaql"
+    detail_level: "full"
+    expected_passed: false
+    expected_reason_prefix: "hard_reject:academic"
+
+  - id: "academic_thesis_arabic"
+    title: "كتابة مشروع تخرج في تعلم الآلة"
+    description: "محتاج شخص يعمل مشروع تخرج جامعي كامل مع الكود والمستند لتقديمه للجامعة."
+    platform: "mostaql"
+    detail_level: "full"
+    expected_passed: false
+    expected_reason_prefix: "hard_reject:academic"
+
+  - id: "academic_exam_english"
+    title: "Help with university exam in algorithms tomorrow"
+    description: "Need an expert to solve exam questions live during my college exam."
+    platform: "freelancer"
+    detail_level: "full"
+    expected_passed: false
+    expected_reason_prefix: "hard_reject:academic"
+
+  - id: "academic_dissertation_english"
+    title: "Write my master dissertation literature review"
+    description: "Need complete dissertation chapter written for my college degree in computer science."
+    platform: "freelancer"
+    detail_level: "full"
+    expected_passed: false
+    expected_reason_prefix: "hard_reject:academic"
+
+  # ---------------------------------------------------------------------------
+  # 7. Hard Rejects: Unpaid Trial or Test Task
+  # ---------------------------------------------------------------------------
+  - id: "unpaid_free_sample_arabic"
+    title: "تطوير نموذج تصنيف صور مع عينة مجانية أولاً"
+    description: "المشروع كبير لكن يرجى إرسال عينة مجانية لإثبات الكفاءة قبل بدء العقد."
+    platform: "mostaql"
+    detail_level: "full"
+    expected_passed: false
+    expected_reason_prefix: "hard_reject:unpaid_or_trial"
+
+  - id: "unpaid_test_task_english"
+    title: "Build predictive model - complete unpaid test task first"
+    description: "Applicants must solve our test task without payment before any offer is considered."
+    platform: "freelancer"
+    detail_level: "full"
+    expected_passed: false
+    expected_reason_prefix: "hard_reject:unpaid_or_trial"
+
+  # ---------------------------------------------------------------------------
+  # 8. Hard Rejects: Unethical & Policy Violations
+  # ---------------------------------------------------------------------------
+  - id: "unethical_fake_reviews"
+    title: "برنامج تقييمات زائفة على خرائط جوجل"
+    description: "نحتاج بوت لنشر fake reviews على حسابات متعددة بشكل آلي."
+    platform: "mostaql"
+    detail_level: "full"
+    expected_passed: false
+    expected_reason_prefix: "hard_reject:unethical_or_policy_violation"
+
+  - id: "unethical_bypass_captcha"
+    title: "Script to bypass captcha and scrape personal data"
+    description: "Need a tool to bypass cloudflare captcha and scrape private user profiles."
+    platform: "freelancer"
+    detail_level: "full"
+    expected_passed: false
+    expected_reason_prefix: "hard_reject:unethical_or_policy_violation"
+
+  # ---------------------------------------------------------------------------
+  # 9. Hard Rejects: Guaranteed Accuracy
+  # ---------------------------------------------------------------------------
+  - id: "guaranteed_accuracy_arabic"
+    title: "نموذج ذكاء اصطناعي بنسبة دقة 99% مضمونة للأسهم"
+    description: "تنبؤ بأسعار البورصة بدقة 99% مع ضمان كامل للربح."
+    platform: "mostaql"
+    detail_level: "full"
+    expected_passed: false
+    expected_reason_prefix: "hard_reject:guaranteed_accuracy"
+
+  - id: "guaranteed_accuracy_english"
+    title: "Guaranteed 100% accuracy model for sports betting"
+    description: "Need 100% accuracy model to predict match outcomes with 100% مضمون results."
+    platform: "freelancer"
+    detail_level: "full"
+    expected_passed: false
+    expected_reason_prefix: "hard_reject:guaranteed_accuracy"
+
+  # ---------------------------------------------------------------------------
+  # 10. Hard Rejects & Pure Irrelevant (Web / Mobile / Design)
+  # ---------------------------------------------------------------------------
+  - id: "pure_wordpress_store"
+    title: "إنشاء متجر الكتروني ووردبريس مع إضافة المنتجات"
+    description: "تركيب قالب ووردبريس وشوبيفاي للمتجر وربط بوابات الدفع."
+    platform: "mostaql"
+    detail_level: "full"
+    expected_passed: false
+    expected_reason_prefix: "hard_reject:pure_irrelevant"
+
+  - id: "pure_flutter_mobile_app"
+    title: "تطبيق جوال فلاتر لمطعم وتوصيل طلبات"
+    description: "تصميم وبرمجة تطبيق Flutter لنظامي أندرويد وآيفون."
+    platform: "mostaql"
+    detail_level: "full"
+    expected_passed: false
+    expected_reason_prefix: "hard_reject:pure_irrelevant"
+
+  - id: "pure_logo_design"
+    title: "تصميم لوجو وهوية بصرية كاملة لشركة عقارية"
+    description: "مطلوب مصمم جرافيك محترف لابتكار شعار وأوراق رسمية."
+    platform: "mostaql"
+    detail_level: "full"
+    expected_passed: false
+    expected_reason_prefix: "hard_reject:pure_irrelevant"
+
+  # ---------------------------------------------------------------------------
+  # 11. Exclude Keywords (Data Entry / Content Writing / Video)
+  # ---------------------------------------------------------------------------
+  - id: "exclude_data_entry_arabic"
+    title: "إدخال بيانات فواتير في ملفات إكسل"
+    description: "نقل الأرقام والأسماء من أوراق ممسوحة ضوئياً إلى شيت إكسل يدوي."
+    platform: "mostaql"
+    detail_level: "full"
+    expected_passed: false
+    expected_reason_prefix: "exclude_keyword"
+
+  - id: "exclude_content_writing_english"
+    title: "Content writing for technology blog articles"
+    description: "Looking for an experienced content writing professional to publish 10 blog posts."
+    platform: "freelancer"
+    detail_level: "full"
+    expected_passed: false
+    expected_reason_prefix: "exclude_keyword"
+
+  # ---------------------------------------------------------------------------
+  # 12. Ambiguous Words (Pass to Stage 2 with Hint Flags)
+  # ---------------------------------------------------------------------------
+  - id: "ambiguous_namozag_form"
+    title: "تصميم نموذج عقد قانوني واستمارة تسجيل"
+    description: "إعداد نموذج استبيان واستمارة رسمية لتسجيل المشاركين في الفعالية."
+    platform: "mostaql"
+    detail_level: "full"
+    expected_passed: true
+    expected_flags: ["ambiguous_ml_model"]
+
+  - id: "ambiguous_tadreeb_course"
+    title: "تدريب عملي على أساسيات لغة بايثون للمبتدئين"
+    description: "تقديم دورة تدريب مكثفة لشرح القوائم والدوال في بايثون."
+    platform: "mostaql"
+    detail_level: "full"
+    expected_passed: true
+    expected_flags: ["ambiguous_training"]
+
+  - id: "ambiguous_ai_imagery"
+    title: "توليد صور بالذكاء الاصطناعي لقصة أطفال"
+    description: "استخدام أدوات الذكاء الاصطناعي لإنشاء رسومات لشخصيات كرتونية ملونة."
+    platform: "mostaql"
+    detail_level: "full"
+    expected_passed: true
+    expected_flags: ["ambiguous_ai_imagery"]
+
+  - id: "ambiguous_chatbot_wrapper"
+    title: "إنشاء chatbot لخدمة العملاء في متجرنا"
+    description: "ربط chatbot مع تيليجرام للرد الآلي وتوجيه الزبائن."
+    platform: "mostaql"
+    detail_level: "full"
+    expected_passed: true
+    expected_flags: ["likely_llm_wrapper"]
+
+  # ---------------------------------------------------------------------------
+  # 13. Clitic Prefixes (Arabic Grammar Variations)
+  # ---------------------------------------------------------------------------
+  - id: "clitic_prefix_leltasneef"
+    title: "خوارزمية للتصنيف الذكي للنصوص الصحفية"
+    description: "استخدام معالجة اللغة الطبيعية للتصنيف الدقيق للمقالات الإخبارية."
+    platform: "mostaql"
+    detail_level: "full"
+    expected_passed: true
+
+  - id: "clitic_prefix_waltaalom"
+    title: "استشارات في الرياضيات والتعلم الآلي"
+    description: "مساعدة في اشتقاق دوال الانحدار والخوارزميات الإحصائية."
+    platform: "mostaql"
+    detail_level: "full"
+    expected_passed: true
+
+  - id: "clitic_prefix_bithakaa"
+    title: "أتمتة الأعمال بالذكاء الاصطناعي وتحليل البيانات"
+    description: "تحليل مبيعات الشركة بالذكاء الاصطناعي وتقديم توصيات تجارية."
+    platform: "mostaql"
+    detail_level: "full"
+    expected_passed: true
+
+  # ---------------------------------------------------------------------------
+  # 14. Latin Strict Boundaries
+  # ---------------------------------------------------------------------------
+  - id: "latin_javascript_not_java"
+    title: "Fullstack React and JavaScript senior engineer"
+    description: "Build clean web frontend using JavaScript, React, and CSS."
+    platform: "freelancer"
+    detail_level: "full"
+    expected_passed: false
+    expected_reason_prefix: "no_include_keywords"
+
+  # ---------------------------------------------------------------------------
+  # 15. Budget & Rate Logic (Fixed vs Hourly, Range Check)
+  # ---------------------------------------------------------------------------
+  - id: "budget_fixed_range_passes"
+    title: "Python web scraping for real estate listings"
+    description: "Scrape properties from a portal into PostgreSQL."
+    platform: "mostaql"
+    detail_level: "full"
+    project_type: "fixed"
+    budget_max_usd: 500.0 # Range $10 - $500: max is 500 >= 25 -> passes!
+    expected_passed: true
+
+  - id: "budget_fixed_low_rejected"
+    title: "Train small machine learning classifier"
+    description: "Simple classification script in scikit-learn."
+    platform: "mostaql"
+    detail_level: "full"
+    project_type: "fixed"
+    budget_max_usd: 15.0 # Max $15 < $25 min budget -> reject!
+    expected_passed: false
+    expected_reason_prefix: "budget_below_min"
+
+  - id: "budget_hourly_high_passes"
+    title: "Data engineer for ETL pipeline optimization"
+    description: "Optimize PostgreSQL queries and pandas transformation."
+    platform: "freelancer"
+    detail_level: "full"
+    project_type: "hourly"
+    budget_max_usd: 30.0 # $30/hr >= $15 min hourly -> passes!
+    expected_passed: true
+
+  - id: "budget_hourly_low_rejected"
+    title: "PyTorch deep learning computer vision model"
+    description: "Train CNN for image classification."
+    platform: "freelancer"
+    detail_level: "full"
+    project_type: "hourly"
+    budget_max_usd: 10.0 # $10/hr < $15 min hourly -> reject!
+    expected_passed: false
+    expected_reason_prefix: "hourly_rate_below_min"
+
+  - id: "budget_unknown_passes"
+    title: "Machine learning model development for medical records"
+    description: "Build classification model using scikit-learn."
+    platform: "freelancer"
+    detail_level: "full"
+    project_type: "fixed"
+    budget_max_usd: null # Unknown budget must PASS!
+    expected_passed: true
+
+  - id: "bids_unknown_passes"
+    title: "تحليل بيانات المبيعات وبناء لوحة تحكم Streamlit"
+    description: "تنظيف بيانات وتحليل إحصائي وعرضها في تطبيق Streamlit."
+    platform: "mostaql"
+    detail_level: "full"
+    bids_count: null # Unknown bids count must PASS!
+    expected_passed: true
+
+  # ---------------------------------------------------------------------------
+  # 16. Title-Only Handling (Khamsat style)
+  # ---------------------------------------------------------------------------
+  - id: "khamsat_title_only_passes"
+    title: "تدريب نموذج ذكاء اصطناعي لتصنيف الصور"
+    description: null # Missing description is NOT a penalty for title_only
+    platform: "khamsat"
+    detail_level: "title_only"
+    expected_passed: true
+
+  - id: "khamsat_title_only_academic_rejects"
+    title: "حل واجب جامعي في البرمجة والخوارزميات"
+    description: null
+    platform: "khamsat"
+    detail_level: "title_only"
+    expected_passed: false
+    expected_reason_prefix: "hard_reject:academic"
+
+  - id: "khamsat_title_only_irrelevant_rejects"
+    title: "تصميم بنرات إعلانية وتسويق بالعمولة"
+    description: null
+    platform: "khamsat"
+    detail_level: "title_only"
+    expected_passed: false
+    expected_reason_prefix: "no_include_keywords"

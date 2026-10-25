@@ -8,6 +8,7 @@ from typing import Any
 import structlog
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from gigradar.classify.rules_filter import RulesFilter
 from gigradar.core.config_loader import (
     resolve_platform_thresholds,
 )
@@ -73,12 +74,14 @@ class PlatformOrchestrator:
         max_detail_attempts: int | None = None,
         clients: dict[str, PlatformClient] | None = None,
         min_expected_listing_rows: int | None = None,
+        rules_filter: RulesFilter | None = None,
     ) -> None:
         self.circuit_breaker = circuit_breaker or CircuitBreaker()
         self.engine = engine
         self._clients: dict[str, PlatformClient] = clients or {}
         self._platform_locks: dict[str, asyncio.Lock] = {}
         self._min_expected_listing_rows = min_expected_listing_rows
+        self.rules_filter = rules_filter or RulesFilter()
         if max_detail_attempts is not None:
             self.max_detail_attempts = max_detail_attempts
         else:
@@ -371,7 +374,17 @@ class PlatformOrchestrator:
 
                 if platform_name == "khamsat":
                     # Khamsat listing stub provides all available data; transition to detail_fetched
-                    await gig_repo.mark_detail_fetched(inc_gig.id)
+                    fetched_gig = await gig_repo.mark_detail_fetched(inc_gig.id)
+                    rules_res = self.rules_filter.evaluate(fetched_gig, platform_name=platform_name)
+                    await gig_repo.record_classification(
+                        gig_id=fetched_gig.id,
+                        stage="rules",
+                        passed=rules_res.passed,
+                        rule_hits=rules_res.hits,
+                        reject_reason=rules_res.reject_reason,
+                        flags=rules_res.flags,
+                        rules_version=self.rules_filter.rules_version,
+                    )
                     await session.commit()
                     continue
 
@@ -395,8 +408,18 @@ class PlatformOrchestrator:
 
                     # Network call without open write transaction
                     detail = await platform_client.fetch_gig_detail(stub_for_fetch)
-                    await gig_repo.update_gig_detail(inc_gig.id, detail)
-                    # Commit after EACH gig detail update!
+                    updated_gig = await gig_repo.update_gig_detail(inc_gig.id, detail)
+                    rules_res = self.rules_filter.evaluate(updated_gig, platform_name=platform_name)
+                    await gig_repo.record_classification(
+                        gig_id=updated_gig.id,
+                        stage="rules",
+                        passed=rules_res.passed,
+                        rule_hits=rules_res.hits,
+                        reject_reason=rules_res.reject_reason,
+                        flags=rules_res.flags,
+                        rules_version=self.rules_filter.rules_version,
+                    )
+                    # Commit after EACH gig detail update and classification!
                     await session.commit()
                 except BlockedByBotProtection as exc:
                     detail_failures_in_tick += 1

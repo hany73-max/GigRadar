@@ -146,11 +146,64 @@ class Gig(Base):
         cascade="all, delete-orphan",
         order_by="GigSnapshot.seen_at",
     )
+    classifications: Mapped[list["Classification"]] = relationship(
+        "Classification",
+        back_populates="gig",
+        cascade="all, delete-orphan",
+        order_by="Classification.created_at.desc()",
+    )
 
     def __repr__(self) -> str:
         return (
             f"<Gig(id={self.id}, platform_id={self.platform_id}, "
             f"external_id='{self.external_id}', state='{self.processing_state}')>"
+        )
+
+
+class Classification(Base):
+    """Classification record for a gig across stages (e.g. 'rules', 'llm')."""
+
+    __tablename__ = "classifications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    gig_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("gigs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    stage: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    passed: Mapped[bool] = mapped_column(Boolean, nullable=False, index=True)
+    rule_hits_json: Mapped[list[str] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    reject_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    flags_json: Mapped[list[str] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    rules_version: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+
+    # Master Prompt Section 4 fields (populated in stage 'llm')
+    match_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    domain: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    work_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    tier: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    feasibility: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    red_flags_json: Mapped[list[str] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    missing_info_json: Mapped[list[str] | None] = mapped_column(
+        JSON(none_as_null=True), nullable=True
+    )
+    suggested_price_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    est_hours: Mapped[float | None] = mapped_column(Float, nullable=True)
+    reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    prompt_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    tokens_in: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tokens_out: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=utc_now, index=True
+    )
+
+    # Relationships
+    gig: Mapped["Gig"] = relationship("Gig", back_populates="classifications")
+
+    def __repr__(self) -> str:
+        return (
+            f"<Classification(id={self.id}, gig_id={self.gig_id}, "
+            f"stage='{self.stage}', passed={self.passed}, version='{self.rules_version}')>"
         )
 
 
