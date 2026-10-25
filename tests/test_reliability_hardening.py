@@ -216,10 +216,10 @@ async def test_freelancer_json_api_never_scans_body_markers() -> None:
 async def test_mostaql_suspicious_empty_listing_fails_tick_and_records_failure(
     tmp_path: Path,
 ) -> None:
-    from sqlalchemy.ext.asyncio import create_async_engine
+    from gigradar.db.session import create_engine_from_url
 
     db_path = tmp_path / "test_suspicious.db"
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    engine = create_engine_from_url(f"sqlite+aiosqlite:///{db_path}")
 
     from gigradar.db.models import Base
 
@@ -278,10 +278,10 @@ async def test_mostaql_suspicious_empty_listing_fails_tick_and_records_failure(
 
 @pytest.mark.asyncio
 async def test_freelancer_exempt_from_suspicious_empty_listing(tmp_path: Path) -> None:
-    from sqlalchemy.ext.asyncio import create_async_engine
+    from gigradar.db.session import create_engine_from_url
 
     db_path = tmp_path / "test_freelancer_exempt.db"
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    engine = create_engine_from_url(f"sqlite+aiosqlite:///{db_path}")
 
     from gigradar.db.models import Base
 
@@ -530,10 +530,10 @@ async def test_orchestrator_reuses_client_and_closes_on_shutdown() -> None:
 
 @pytest.mark.asyncio
 async def test_per_platform_lock_prevents_concurrent_ticks_on_same_platform(tmp_path: Path) -> None:
-    from sqlalchemy.ext.asyncio import create_async_engine
+    from gigradar.db.session import create_engine_from_url
 
     db_path = tmp_path / "test_concurrency.db"
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    engine = create_engine_from_url(f"sqlite+aiosqlite:///{db_path}")
 
     from gigradar.db.models import Base
 
@@ -625,6 +625,7 @@ async def test_scheduler_setup_jobs_staggered(tmp_path: Path) -> None:
     assert len(unique_seconds) > 1
 
     await runner.shutdown()
+    await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -667,6 +668,7 @@ async def test_scheduler_startup_health_checks_unhealthy_records_failure(tmp_pat
     assert all(status is False for status in results.values())
 
     await runner.shutdown()
+    await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -710,6 +712,7 @@ async def test_scheduler_startup_health_checks_healthy_and_exceptions(tmp_path: 
     assert results.get("mostaql") is True
     assert results.get("khamsat") is False
     await runner.shutdown()
+    await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -736,6 +739,7 @@ async def test_scheduler_cleanup_interrupted_runs_with_active(tmp_path: Path) ->
     count = await runner.cleanup_interrupted_runs()
     assert count >= 1
     await runner.shutdown()
+    await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -796,6 +800,7 @@ async def test_scheduler_run_once_success_and_disabled(tmp_path: Path) -> None:
         assert "disabled_p" not in results
 
     await runner.shutdown()
+    await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -847,6 +852,7 @@ async def test_scheduler_setup_jobs_with_disabled_platform(tmp_path: Path) -> No
         assert "poll_plat_b" not in job_ids
 
     await runner.shutdown()
+    await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -902,6 +908,8 @@ async def test_scheduler_run_forever_and_clean_shutdown(tmp_path: Path) -> None:
     await shutdown_task
 
     assert runner._is_running is False
+    await runner.shutdown()
+    await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -931,6 +939,7 @@ async def test_scheduler_run_once_with_exceptions(tmp_path: Path) -> None:
         assert res.success is False
         assert "Database unavailable" in str(res.error)
     await runner.shutdown()
+    await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -970,6 +979,7 @@ async def test_scheduler_platform_job_callback(tmp_path: Path) -> None:
     assert "mostaql" in calls
     assert "khamsat" in calls
     await runner.shutdown()
+    await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -1004,10 +1014,13 @@ async def test_scheduler_run_forever_cancelled_task(tmp_path: Path) -> None:
 
     runner = SchedulerRunner(orchestrator=DummyOrch(engine=engine))
     forever_task = asyncio.create_task(runner.run_forever())
-    await asyncio.sleep(0.001)
+    while not runner._is_running:
+        await asyncio.sleep(0.005)
     forever_task.cancel()
     await forever_task
     assert runner._is_running is False
+    await runner.shutdown()
+    await engine.dispose()
 
 
 def test_real_database_file_untouched_by_suite(guard_real_database: Any) -> None:

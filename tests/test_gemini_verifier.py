@@ -22,7 +22,7 @@ def test_mask_key() -> None:
     assert mask_key("") == "<unset>"
     assert mask_key("your_gemini_api_key_here") == "<placeholder: your_gem...>"
     assert mask_key("12345") == "***"
-    assert mask_key("AIzaSyD1234567890abcdef") == "AIza...cdef"
+    assert mask_key("AIzaSyD1234567890abcdef") == "...cdef"
 
 
 def test_verify_gemini_key_empty() -> None:
@@ -44,23 +44,25 @@ def test_verify_gemini_key_placeholder() -> None:
 def test_verify_gemini_key_success() -> None:
     with patch("google.genai.Client") as mock_client_cls:
         mock_instance = MagicMock()
-        mock_model = MagicMock()
-        mock_model.display_name = "Gemini 2.5 Flash"
-        mock_instance.models.get.return_value = mock_model
+        mock_instance.models.generate_content.return_value = MagicMock()
         mock_client_cls.return_value = mock_instance
 
-        ok, msg = verify_gemini_key("fake_valid_key", model_id="gemini-2.5-flash")
+        ok, msg = verify_gemini_key("fake_valid_key", model_id="gemini-3.5-flash-lite")
         assert ok is True
-        assert "Key verified successfully" in msg
-        mock_instance.models.get.assert_called_once_with(model="gemini-2.5-flash")
+        assert "Live 1-token generation succeeded" in msg
+        mock_instance.models.generate_content.assert_called_once_with(
+            model="gemini-3.5-flash-lite",
+            contents="ping",
+            config={"max_output_tokens": 1},
+        )
 
 
 def test_verify_gemini_key_failure() -> None:
     with patch("google.genai.Client") as mock_client_cls:
         mock_instance = MagicMock()
-        mock_instance.models.get.side_effect = Exception("API Key not found")
+        mock_instance.models.generate_content.side_effect = Exception("Model not found")
         mock_client_cls.return_value = mock_instance
 
         ok, msg = verify_gemini_key("invalid_key")
         assert ok is False
-        assert "Failed to connect" in msg or "rejected key" in msg
+        assert "Failed 1-token generation" in msg or "rejected key" in msg

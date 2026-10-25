@@ -7,10 +7,10 @@ from gigradar.core.settings import Settings
 def test_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Settings, "model_config", SettingsConfigDict(extra="ignore"))
     settings = Settings()
-    assert settings.llm_model_scorer == "gemini-2.5-flash"
+    assert settings.llm_model_scorer == "gemini-3.5-flash-lite"
+    assert settings.llm_model_pitch == "gemini-3.8-flash"
     assert settings.score_threshold == 65
     assert settings.auto_submit is False
-    assert settings.poll_interval_seconds_mostaql == 120
     assert settings.llm_max_rpm == 10
     assert settings.llm_daily_call_budget == 200
 

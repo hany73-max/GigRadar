@@ -96,7 +96,7 @@ class RateLimiter:
             if idle_threshold_seconds is not None
             else (min_interval_seconds + jitter_max_seconds)
         )
-        self._last_request_time: float = 0.0
+        self._last_request_time: float | None = None
         self._lock = asyncio.Lock()
 
     async def wait(self) -> None:
@@ -108,7 +108,7 @@ class RateLimiter:
         """
         async with self._lock:
             now = asyncio.get_event_loop().time()
-            if self._last_request_time == 0.0:
+            if self._last_request_time is None:
                 self._last_request_time = now
                 return
 
@@ -136,8 +136,10 @@ def _is_retryable_exception(exc: BaseException) -> bool:
     return False
 
 
-def _parse_retry_after(response: httpx.Response) -> float | None:
-    """Extract retry delay from 429/503 Retry-After header if present."""
+def _parse_retry_after(
+    response: httpx.Response, max_retry_after_seconds: float = 120.0
+) -> float | None:
+    """Extract retry delay from 429/503 Retry-After header if present, capped at max_retry_after_seconds."""
     header = response.headers.get("retry-after")
     if not header:
         return None
@@ -146,7 +148,7 @@ def _parse_retry_after(response: httpx.Response) -> float | None:
     # Try integer seconds first
     try:
         seconds = float(header)
-        return max(0.0, seconds)
+        return min(max_retry_after_seconds, max(0.0, seconds))
     except ValueError:
         pass
 
@@ -155,7 +157,7 @@ def _parse_retry_after(response: httpx.Response) -> float | None:
         dt = parsedate_to_datetime(header)
         now = datetime.now(UTC)
         diff = (dt - now).total_seconds()
-        return max(0.0, diff)
+        return min(max_retry_after_seconds, max(0.0, diff))
     except Exception:
         return None
 
@@ -170,6 +172,7 @@ class PoliteHttpClient:
         rate_limiter: RateLimiter | None = None,
         max_retries: int = 3,
         extra_headers: dict[str, str] | None = None,
+        max_retry_after_seconds: float = 120.0,
     ) -> None:
         headers = {
             "User-Agent": user_agent,
@@ -187,6 +190,7 @@ class PoliteHttpClient:
         )
         self.rate_limiter = rate_limiter or RateLimiter()
         self.max_retries = max_retries
+        self.max_retry_after_seconds = max_retry_after_seconds
 
     async def get(self, url: str, **kwargs: Any) -> httpx.Response:
         """Perform polite GET request with rate limiting and exponential backoff."""
@@ -223,7 +227,9 @@ class PoliteHttpClient:
 
                 # Check if we got 429/503 with Retry-After header
                 if response.status_code in {429, 503}:
-                    retry_after = _parse_retry_after(response)
+                    retry_after = _parse_retry_after(
+                        response, max_retry_after_seconds=self.max_retry_after_seconds
+                    )
                     if retry_after is not None and retry_after > 0:
                         logger.warning(
                             "http_retry_after_received",

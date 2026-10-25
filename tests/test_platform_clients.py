@@ -118,6 +118,7 @@ async def test_freelancer_client_list_and_detail() -> None:
     detail_json = (JSON_FIXTURES_DIR / "freelancer_single_project.json").read_text(encoding="utf-8")
 
     def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers.get("accept") == "application/json"
         url_str = str(request.url)
         if "projects/active" in url_str:
             return httpx.Response(200, text=active_json)

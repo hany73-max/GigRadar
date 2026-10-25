@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field
 
 
 class GigStub(BaseModel):
@@ -13,7 +13,7 @@ class GigStub(BaseModel):
     external_id: str
     url: str
     title: str
-    posted_at: datetime | None = None
+    posted_at: AwareDatetime | None = None
     bids_count: int | None = None
     brief_description: str | None = None
     client_name: str | None = None
@@ -35,7 +35,7 @@ class Gig(BaseModel):
     budget_max_usd: float | None = None
     budget_usd_est: float | None = None
     bids_count: int | None = None
-    posted_at: datetime | None = None
+    posted_at: AwareDatetime | None = None
     deadline_text: str | None = None
     client_name: str | None = None
     client_stats: dict[str, Any] = Field(default_factory=dict)
@@ -53,4 +53,4 @@ class HealthReport(BaseModel):
     platform_id: str
     is_healthy: bool
     message: str
-    checked_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    checked_at: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))

@@ -10,6 +10,7 @@ from gigradar.core.config_models import (
     PlatformsConfig,
     PortfolioConfig,
     ProfileConfig,
+    ResolvedThresholds,
     RulesConfig,
 )
 from gigradar.core.settings import get_settings
@@ -65,6 +66,47 @@ def load_platforms_config(config_dir: Path | None = None) -> PlatformsConfig:
     base = _get_config_dir(config_dir)
     raw = load_yaml(base / "platforms.yaml")
     return PlatformsConfig.model_validate(raw)
+
+
+def resolve_platform_thresholds(
+    platform_name: str, config_dir: Path | None = None
+) -> ResolvedThresholds:
+    """Resolve platform thresholds by inheriting unset values (None) from rules.yaml."""
+    rules_cfg = load_rules_config(config_dir)
+    default_bids = rules_cfg.thresholds.max_existing_bids
+    default_budget = rules_cfg.thresholds.min_budget_usd
+    default_age = rules_cfg.thresholds.max_gig_age_minutes
+    default_min_rows = 5
+
+    try:
+        platforms_cfg = load_platforms_config(config_dir)
+        norm_name = platform_name.strip().lower()
+        plat = platforms_cfg.platforms.get(norm_name)
+        if plat is not None:
+            pt = plat.thresholds
+            return ResolvedThresholds(
+                max_existing_bids=pt.max_existing_bids
+                if pt.max_existing_bids is not None
+                else default_bids,
+                min_budget_usd=pt.min_budget_usd
+                if pt.min_budget_usd is not None
+                else default_budget,
+                max_gig_age_minutes=pt.max_gig_age_minutes
+                if pt.max_gig_age_minutes is not None
+                else default_age,
+                min_expected_listing_rows=pt.min_expected_listing_rows
+                if pt.min_expected_listing_rows is not None
+                else default_min_rows,
+            )
+    except Exception:
+        pass
+
+    return ResolvedThresholds(
+        max_existing_bids=default_bids,
+        min_budget_usd=default_budget,
+        max_gig_age_minutes=default_age,
+        min_expected_listing_rows=default_min_rows,
+    )
 
 
 def validate_all_configs(config_dir: Path | None = None) -> dict[str, str]:

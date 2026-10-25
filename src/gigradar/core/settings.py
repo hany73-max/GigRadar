@@ -17,8 +17,8 @@ class Settings(BaseSettings):
 
     # Gemini LLM configuration
     gemini_api_key: SecretStr | None = Field(default=None, alias="GEMINI_API_KEY")
-    llm_model_scorer: str = Field(default="gemini-2.5-flash", alias="LLM_MODEL_SCORER")
-    llm_model_pitch: str = Field(default="gemini-2.5-flash", alias="LLM_MODEL_PITCH")
+    llm_model_scorer: str = Field(default="gemini-3.5-flash-lite", alias="LLM_MODEL_SCORER")
+    llm_model_pitch: str = Field(default="gemini-3.8-flash", alias="LLM_MODEL_PITCH")
     llm_daily_call_budget: int = Field(default=200, alias="LLM_DAILY_CALL_BUDGET")
     llm_max_rpm: int = Field(default=10, alias="LLM_MAX_RPM")
 
@@ -36,14 +36,6 @@ class Settings(BaseSettings):
     score_threshold: int = Field(default=65, alias="SCORE_THRESHOLD")
     auto_submit: bool = Field(default=False, alias="AUTO_SUBMIT")
     max_detail_attempts: int = Field(default=3, alias="MAX_DETAIL_ATTEMPTS")
-
-    # Polling intervals
-    poll_interval_seconds_mostaql: int = Field(default=120, alias="POLL_INTERVAL_SECONDS_MOSTAQL")
-    poll_interval_seconds_khamsat: int = Field(default=180, alias="POLL_INTERVAL_SECONDS_KHAMSAT")
-    poll_interval_seconds_freelancer: int = Field(
-        default=120,
-        alias="POLL_INTERVAL_SECONDS_FREELANCER",
-    )
 
     # Freelancer.com specific
     freelancer_oauth_token: SecretStr | None = Field(

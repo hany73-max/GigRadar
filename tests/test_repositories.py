@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
-    create_async_engine,
 )
 
 from gigradar.core.models import Gig as DomainGig
@@ -26,8 +25,10 @@ async def async_db(
     tmp_path: Path,
 ) -> AsyncGenerator[tuple[AsyncEngine, async_sessionmaker[AsyncSession]], None]:
     """Create a temporary SQLite async database and initialize schema."""
+    from gigradar.db.session import create_engine_from_url
+
     db_file = tmp_path / "test_repo.db"
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}", echo=False)
+    engine = create_engine_from_url(f"sqlite+aiosqlite:///{db_file}")
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

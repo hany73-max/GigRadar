@@ -1,31 +1,37 @@
 """Pydantic validation models for GigRadar YAML configurations."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class ConfigBaseModel(BaseModel):
+    """Base class for all YAML configuration models, strictly forbidding unknown keys."""
+
+    model_config = ConfigDict(extra="forbid")
 
 
 # ------------------------------------------------------------------------------
 # Portfolio
 # ------------------------------------------------------------------------------
-class ProjectItem(BaseModel):
+class ProjectItem(ConfigBaseModel):
     id: str
     title: str
     tags: list[str] = Field(default_factory=list)
     one_liner: str
 
 
-class PortfolioConfig(BaseModel):
+class PortfolioConfig(ConfigBaseModel):
     projects: list[ProjectItem] = Field(default_factory=list)
 
 
 # ------------------------------------------------------------------------------
 # Owner Profile
 # ------------------------------------------------------------------------------
-class LanguageSkill(BaseModel):
+class LanguageSkill(ConfigBaseModel):
     language: str
     proficiency: str
 
 
-class OwnerInfo(BaseModel):
+class OwnerInfo(ConfigBaseModel):
     name: str
     title: str
     location: str
@@ -34,18 +40,18 @@ class OwnerInfo(BaseModel):
     languages: list[LanguageSkill] = Field(default_factory=list)
 
 
-class SkillTier(BaseModel):
+class SkillTier(ConfigBaseModel):
     description: str
     skills: list[str] = Field(default_factory=list)
 
 
-class SkillTiers(BaseModel):
+class SkillTiers(ConfigBaseModel):
     tier_a: SkillTier
     tier_b: SkillTier
     tier_c: SkillTier
 
 
-class ProfileConfig(BaseModel):
+class ProfileConfig(ConfigBaseModel):
     owner: OwnerInfo
     skill_tiers: SkillTiers
     hard_rejects: list[str] = Field(default_factory=list)
@@ -54,7 +60,7 @@ class ProfileConfig(BaseModel):
 # ------------------------------------------------------------------------------
 # Claims Allowlist
 # ------------------------------------------------------------------------------
-class ClaimsAllowlistConfig(BaseModel):
+class ClaimsAllowlistConfig(ConfigBaseModel):
     allowed_claims: dict[str, list[str]] = Field(default_factory=dict)
     forbidden_patterns: list[str] = Field(default_factory=list)
 
@@ -62,23 +68,23 @@ class ClaimsAllowlistConfig(BaseModel):
 # ------------------------------------------------------------------------------
 # Stage 1 Rules
 # ------------------------------------------------------------------------------
-class RulesThresholds(BaseModel):
+class RulesThresholds(ConfigBaseModel):
     min_budget_usd: float = 25.0
     max_existing_bids: int = 30
     max_gig_age_minutes: int = 1440
 
 
-class KeywordFamily(BaseModel):
+class KeywordFamily(ConfigBaseModel):
     name: str
     keywords: list[str] = Field(default_factory=list)
 
 
-class CategoryRules(BaseModel):
+class CategoryRules(ConfigBaseModel):
     deny_categories: list[str] = Field(default_factory=list)
     allow_categories: list[str] = Field(default_factory=list)
 
 
-class RulesConfig(BaseModel):
+class RulesConfig(ConfigBaseModel):
     thresholds: RulesThresholds = Field(default_factory=RulesThresholds)
     keyword_families: dict[str, KeywordFamily] = Field(default_factory=dict)
     hard_rejects: dict[str, list[str]] = Field(default_factory=dict)
@@ -88,14 +94,14 @@ class RulesConfig(BaseModel):
 # ------------------------------------------------------------------------------
 # Platforms
 # ------------------------------------------------------------------------------
-class PlatformThresholds(BaseModel):
-    max_existing_bids: int = 30
-    min_budget_usd: float = 25.0
-    max_gig_age_minutes: int = 1440
+class PlatformThresholds(ConfigBaseModel):
+    max_existing_bids: int | None = None
+    min_budget_usd: float | None = None
+    max_gig_age_minutes: int | None = None
     min_expected_listing_rows: int = 5
 
 
-class PlatformSettings(BaseModel):
+class PlatformSettings(ConfigBaseModel):
     name: str
     enabled: bool = True
     type: str  # "scraper" or "api"
@@ -115,5 +121,15 @@ class PlatformSettings(BaseModel):
     thresholds: PlatformThresholds = Field(default_factory=PlatformThresholds)
 
 
-class PlatformsConfig(BaseModel):
+class PlatformsConfig(ConfigBaseModel):
     platforms: dict[str, PlatformSettings] = Field(default_factory=dict)
+
+
+# ------------------------------------------------------------------------------
+# Resolved Thresholds
+# ------------------------------------------------------------------------------
+class ResolvedThresholds(ConfigBaseModel):
+    max_existing_bids: int
+    min_budget_usd: float
+    max_gig_age_minutes: int
+    min_expected_listing_rows: int

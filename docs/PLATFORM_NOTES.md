@@ -226,5 +226,3 @@ Per Master Prompt rules, the client applies strict filtering to discard irreleva
 - **Rate Limits:** Approximately 100 requests per minute per IP. `PoliteHttpClient` enforces jitter, rate limiting, and backoff on HTTP 429 (`Retry-After`).
 - **Terms of Service:** Read-only inspection of active listings through the official API does not violate platform rules. Automated bidding without human oversight is prohibited (bidding is out of scope for Phase 1b and strictly human-gated in Phase 9).
 
-- **Terms of Service:** Read-only inspection of active listings through the official API does not violate platform rules. Automated bidding without human oversight is prohibited (bidding is out of scope for Phase 1b and strictly human-gated in Phase 9).
-

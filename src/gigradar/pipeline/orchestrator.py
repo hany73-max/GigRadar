@@ -8,7 +8,9 @@ from typing import Any
 import structlog
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from gigradar.core.config_loader import load_platforms_config, load_rules_config
+from gigradar.core.config_loader import (
+    resolve_platform_thresholds,
+)
 from gigradar.core.models import GigStub
 from gigradar.db.models import utc_now
 from gigradar.db.repositories.gig_repo import GigRepository
@@ -52,40 +54,13 @@ def get_default_client(platform_name: str) -> PlatformClient:
 
 
 def get_platform_max_age_minutes(platform_name: str) -> int:
-    """Retrieve max_gig_age_minutes from platforms.yaml if present, otherwise rules.yaml default."""
-    try:
-        platforms_cfg = load_platforms_config()
-        platform_settings = platforms_cfg.platforms.get(platform_name)
-        if platform_settings and platform_settings.thresholds.max_gig_age_minutes:
-            return platform_settings.thresholds.max_gig_age_minutes
-    except Exception as exc:
-        logger.debug("failed_loading_platforms_config_for_age", error=str(exc))
-
-    try:
-        rules_cfg = load_rules_config()
-        if rules_cfg and rules_cfg.thresholds.max_gig_age_minutes:
-            return rules_cfg.thresholds.max_gig_age_minutes
-    except Exception as exc:
-        logger.debug("failed_loading_rules_config_for_age", error=str(exc))
-
-    return 1440  # 24 hours fallback
+    """Retrieve max_gig_age_minutes via the single threshold resolver."""
+    return resolve_platform_thresholds(platform_name).max_gig_age_minutes
 
 
 def get_platform_min_expected_rows(platform_name: str) -> int:
-    """Retrieve min_expected_listing_rows from platforms.yaml if present, default 5."""
-    try:
-        platforms_cfg = load_platforms_config()
-        platform_settings = platforms_cfg.platforms.get(platform_name)
-        if (
-            platform_settings
-            and platform_settings.thresholds
-            and platform_settings.thresholds.min_expected_listing_rows
-        ):
-            return platform_settings.thresholds.min_expected_listing_rows
-    except Exception as exc:
-        logger.debug("failed_loading_platforms_config_for_min_rows", error=str(exc))
-
-    return 5
+    """Retrieve min_expected_listing_rows via the single threshold resolver."""
+    return resolve_platform_thresholds(platform_name).min_expected_listing_rows
 
 
 class PlatformOrchestrator:

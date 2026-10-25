@@ -1,4 +1,5 @@
 import sys
+from datetime import UTC, datetime
 from typing import Any
 
 # Ensure UTF-8 output on Windows consoles to support Arabic text
@@ -12,7 +13,7 @@ from rich.console import Console
 from rich.table import Table
 
 from gigradar import __version__
-from gigradar.core.config_loader import validate_all_configs
+from gigradar.core.config_loader import resolve_platform_thresholds, validate_all_configs
 from gigradar.core.gemini_verifier import is_placeholder, mask_key, verify_gemini_key
 from gigradar.core.logging import setup_logging
 from gigradar.core.settings import get_settings, reload_settings
@@ -189,53 +190,66 @@ def doctor(
     console.print(db_table)
     console.print()
 
-    # 3. Gemini API Live Key Verification
+    # 3. Gemini API Live Key & Model Verification
     llm_table = Table(
         title="Google Gemini API Verification", show_header=True, header_style="bold magenta"
     )
-    llm_table.add_column("Check", style="cyan", width=25)
+    llm_table.add_column("Check / Model", style="cyan", width=28)
     llm_table.add_column("Status", width=15)
     llm_table.add_column("Details", style="dim")
 
     raw_key = settings.gemini_api_key.get_secret_value() if settings.gemini_api_key else None
+    models_to_test = [
+        ("Scorer", settings.llm_model_scorer),
+        ("Pitch", settings.llm_model_pitch),
+    ]
 
     if not raw_key:
         llm_table.add_row(
             "GEMINI_API_KEY", "[yellow]NOT SET[/yellow]", "Set GEMINI_API_KEY in .env"
         )
-        llm_table.add_row("Live Connectivity", "[yellow]SKIPPED[/yellow]", "No key provided")
+        for role, model in models_to_test:
+            llm_table.add_row(f"{role} ({model})", "[yellow]SKIPPED[/yellow]", "No key provided")
     elif is_placeholder(raw_key):
         has_placeholder = True
         llm_table.add_row(
             "GEMINI_API_KEY", "[yellow]PLACEHOLDER[/yellow]", f"'{raw_key}' from .env.example"
         )
-        llm_table.add_row(
-            "Live Connectivity", "[yellow]SKIPPED[/yellow]", "Placeholder key; add real key in .env"
-        )
+        for role, model in models_to_test:
+            llm_table.add_row(
+                f"{role} ({model})",
+                "[yellow]SKIPPED[/yellow]",
+                "Placeholder key; add real key in .env",
+            )
     elif offline:
         masked_gemini = mask_key(raw_key)
         llm_table.add_row(
             "GEMINI_API_KEY", f"[green]FOUND[/green] ({masked_gemini})", "Key present"
         )
-        llm_table.add_row("Live Connectivity", "[cyan]SKIPPED[/cyan]", "--offline passed")
+        for role, model in models_to_test:
+            llm_table.add_row(f"{role} ({model})", "[cyan]SKIPPED[/cyan]", "--offline passed")
     elif skip_live_llm:
         masked_gemini = mask_key(raw_key)
         llm_table.add_row(
             "GEMINI_API_KEY", f"[green]FOUND[/green] ({masked_gemini})", "Key present"
         )
-        llm_table.add_row("Live Connectivity", "[cyan]SKIPPED[/cyan]", "--skip-live-llm passed")
+        for role, model in models_to_test:
+            llm_table.add_row(f"{role} ({model})", "[cyan]SKIPPED[/cyan]", "--skip-live-llm passed")
     else:
         masked_gemini = mask_key(raw_key)
         llm_table.add_row(
             "GEMINI_API_KEY", f"[green]FOUND[/green] ({masked_gemini})", "Key present"
         )
-        with console.status("[bold green]Contacting Gemini API...[/bold green]"):
-            is_valid, msg = verify_gemini_key(raw_key, model_id=settings.llm_model_scorer)
-        if is_valid:
-            llm_table.add_row("Live Connectivity", "[green]PASS[/green]", msg)
-        else:
-            all_passed = False
-            llm_table.add_row("Live Connectivity", "[red]FAIL[/red]", msg)
+        for role, model in models_to_test:
+            with console.status(
+                f"[bold green]Testing 1-token generation for {role} ({model})...[/bold green]"
+            ):
+                is_valid, msg = verify_gemini_key(raw_key, model_id=model)
+            if is_valid:
+                llm_table.add_row(f"{role} ({model})", "[green]PASS[/green]", msg)
+            else:
+                all_passed = False
+                llm_table.add_row(f"{role} ({model})", "[red]FAIL[/red]", msg)
 
     console.print(llm_table)
     console.print()
@@ -319,7 +333,7 @@ async def _run_scrape_once(
     fetch_details: bool,
     all_gigs: bool = False,
 ) -> list[Any]:
-    from datetime import UTC, datetime, timedelta
+    from datetime import datetime, timedelta
 
     from gigradar.platforms.freelancer.client import FreelancerClient
     from gigradar.platforms.khamsat.client import KhamsatClient
@@ -359,7 +373,7 @@ async def _run_scrape_once(
             client.config.max_pages_per_run = 1
             since: datetime | None = None
             if not all_gigs:
-                max_age_min = client.config.thresholds.max_gig_age_minutes
+                max_age_min = resolve_platform_thresholds("freelancer").max_gig_age_minutes
                 since = datetime.now(UTC) - timedelta(minutes=max_age_min)
             stubs = await client.list_new_gigs(since=since)
             gigs = []
@@ -514,7 +528,16 @@ def db_stats() -> None:
                 for plat in platforms:
                     last_finished = await scrape_run_repo.get_last_finished_run(plat.id)
                     failed_24h = await scrape_run_repo.count_failed_or_interrupted_runs_24h(plat.id)
-                    last_error_msg = await scrape_run_repo.get_latest_error_message(plat.id)
+                    last_error_info = await scrape_run_repo.get_latest_error_info(plat.id)
+                    last_err_msg = last_error_info[0] if last_error_info else None
+                    last_err_time = last_error_info[1] if last_error_info else None
+                    if isinstance(last_err_time, datetime):
+                        err_time_str = last_err_time.strftime("%Y-%m-%d %H:%M:%S")
+                    elif isinstance(last_err_time, str):
+                        err_time_str = last_err_time[:19].replace("T", " ")
+                    else:
+                        err_time_str = None
+
                     details.append(
                         {
                             "name": plat.name,
@@ -523,7 +546,8 @@ def db_stats() -> None:
                             "pause_reason": plat.pause_reason,
                             "last_finished_run": last_finished,
                             "failed_24h": failed_24h,
-                            "last_error": last_error_msg,
+                            "last_error": last_err_msg,
+                            "last_error_time": err_time_str,
                         }
                     )
                 return stats, details
@@ -588,9 +612,13 @@ def db_stats() -> None:
         failed_24h_str = (
             f"[red]{item['failed_24h']}[/red]" if item["failed_24h"] > 0 else "[green]0[/green]"
         )
-        last_error_str = (
-            f"[red]{item['last_error']}[/red]" if item.get("last_error") else "[green]None[/green]"
-        )
+        if item.get("last_error"):
+            time_suffix = (
+                f" [dim]({item['last_error_time']})[/dim]" if item.get("last_error_time") else ""
+            )
+            last_error_str = f"[red]{item['last_error']}[/red]{time_suffix}"
+        else:
+            last_error_str = "[green]None[/green]"
 
         plat_table.add_row(
             p_name,
@@ -611,7 +639,10 @@ def db_stats() -> None:
     if platforms_with_errors:
         console.print("[bold yellow]Last Platform Errors:[/bold yellow]")
         for item in platforms_with_errors:
-            console.print(f"  • [cyan]{item['name']}[/cyan]: [red]{item['last_error']}[/red]")
+            time_tag = f" at {item['last_error_time']}" if item.get("last_error_time") else ""
+            console.print(
+                f"  • [cyan]{item['name']}[/cyan]{time_tag}: [red]{item['last_error']}[/red]"
+            )
         console.print()
 
 

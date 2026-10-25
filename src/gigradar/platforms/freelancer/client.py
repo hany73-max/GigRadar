@@ -80,6 +80,7 @@ class FreelancerClient:
                 user_agent=self.config.user_agent,
                 timeout_seconds=float(self.config.timeout_seconds),
                 rate_limiter=rate_limiter,
+                extra_headers={"Accept": "application/json"},
             )
             self._owns_http = True
         else:
@@ -113,7 +114,11 @@ class FreelancerClient:
         for skill_id in self.skill_ids:
             params.append(("jobs[]", skill_id))
 
-        response = await self._http.get(active_endpoint, params=params)
+        response = await self._http.get(
+            active_endpoint,
+            params=params,
+            headers={"Accept": "application/json"},
+        )
         payload = response.json()
         raw_projects = payload.get("result", {}).get("projects", [])
 
@@ -161,6 +166,7 @@ class FreelancerClient:
         response = await self._http.get(
             detail_endpoint,
             params=[("full_description", "true"), ("job_details", "true")],
+            headers={"Accept": "application/json"},
         )
         data = response.json()
         raw_proj = data.get("result")
@@ -177,7 +183,11 @@ class FreelancerClient:
         """Verify Freelancer active projects API connectivity and response structure."""
         active_endpoint = f"{self.api_root}projects/active/"
         try:
-            response = await self._http.get(active_endpoint, params=[("limit", 1)])
+            response = await self._http.get(
+                active_endpoint,
+                params=[("limit", 1)],
+                headers={"Accept": "application/json"},
+            )
             if response.status_code != 200:
                 return HealthReport(
                     platform_id=self.name,

@@ -62,6 +62,19 @@ def test_parse_retry_after_seconds() -> None:
     assert _parse_retry_after(resp) == 15.0
 
 
+def test_parse_retry_after_capped() -> None:
+    resp = httpx.Response(429, headers={"Retry-After": "300"})
+    # Default cap is 120
+    assert _parse_retry_after(resp) == 120.0
+    # Custom cap
+    assert _parse_retry_after(resp, max_retry_after_seconds=60.0) == 60.0
+
+
+def test_rate_limiter_none_sentinel() -> None:
+    limiter = RateLimiter()
+    assert limiter._last_request_time is None
+
+
 def test_parse_retry_after_missing() -> None:
     resp = httpx.Response(200)
     assert _parse_retry_after(resp) is None

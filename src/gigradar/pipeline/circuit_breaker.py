@@ -16,11 +16,19 @@ class CircuitBreaker:
 
     def __init__(
         self,
-        failure_threshold: int = 3,
-        cooldown_minutes: int = 15,
+        failure_threshold: int | None = None,
+        cooldown_minutes: int | None = None,
     ) -> None:
-        self.failure_threshold = failure_threshold
-        self.cooldown_minutes = cooldown_minutes
+        self.default_failure_threshold = failure_threshold
+        self.default_cooldown_minutes = cooldown_minutes
+
+    @property
+    def failure_threshold(self) -> int:
+        return self.default_failure_threshold if self.default_failure_threshold is not None else 3
+
+    @property
+    def cooldown_minutes(self) -> int:
+        return self.default_cooldown_minutes if self.default_cooldown_minutes is not None else 15
 
     async def can_execute(
         self,
@@ -70,9 +78,13 @@ class CircuitBreaker:
         platform_id: int,
         error_message: str,
         now: datetime | None = None,
+        failure_threshold: int | None = None,
+        cooldown_minutes: int | None = None,
     ) -> bool:
         """Record a tick failure. Trips circuit breaker if consecutive failures >= threshold.
 
+        Resolves circuit_breaker_failures and circuit_breaker_cooldown_minutes from platforms.yaml
+        unless explicitly provided.
         Returns True if the breaker was tripped, False otherwise.
         """
         current_time = now or utc_now()
@@ -80,19 +92,49 @@ class CircuitBreaker:
         if platform is None:
             return False
 
+        # Resolve thresholds:
+        # 1. Method arguments override everything if given
+        thresh = failure_threshold
+        cd_min = cooldown_minutes
+
+        # 2. Explicit instance configuration overrides platforms.yaml
+        if thresh is None and self.default_failure_threshold is not None:
+            thresh = self.default_failure_threshold
+        if cd_min is None and self.default_cooldown_minutes is not None:
+            cd_min = self.default_cooldown_minutes
+
+        # 3. Otherwise resolve from platforms.yaml
+        if thresh is None or cd_min is None:
+            try:
+                from gigradar.core.config_loader import load_platforms_config
+
+                plat_cfg = load_platforms_config()
+                norm_name = platform.name.strip().lower()
+                plat_settings = plat_cfg.platforms.get(norm_name)
+                if plat_settings is not None:
+                    if thresh is None:
+                        thresh = plat_settings.circuit_breaker_failures
+                    if cd_min is None:
+                        cd_min = plat_settings.circuit_breaker_cooldown_minutes
+            except Exception:
+                pass
+
+        eff_failure_threshold = thresh if thresh is not None else 3
+        eff_cooldown_minutes = cd_min if cd_min is not None else 15
+
         consecutive_errors = await scrape_run_repo.count_consecutive_errors(platform_id)
         logger.warning(
             "circuit_breaker_tick_failed",
             platform=platform.name,
             consecutive_errors=consecutive_errors,
-            threshold=self.failure_threshold,
+            threshold=eff_failure_threshold,
             error=error_message,
         )
 
-        if consecutive_errors >= self.failure_threshold:
-            paused_until = current_time + timedelta(minutes=self.cooldown_minutes)
+        if consecutive_errors >= eff_failure_threshold:
+            paused_until = current_time + timedelta(minutes=eff_cooldown_minutes)
             reason = (
-                f"Consecutive failure threshold ({self.failure_threshold}) reached. "
+                f"Consecutive failure threshold ({eff_failure_threshold}) reached. "
                 f"Latest error: {error_message}"
             )
             await platform_repo.set_paused(platform_id, paused_until, reason=reason)

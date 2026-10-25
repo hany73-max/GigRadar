@@ -164,8 +164,8 @@ class ScrapeRunRepository:
                 count += 1
         return count
 
-    async def get_latest_error_message(self, platform_id: int) -> str | None:
-        """Retrieve the most recent error message from any run for this platform."""
+    async def get_latest_error_info(self, platform_id: int) -> tuple[str, datetime | str] | None:
+        """Retrieve the most recent error message and its timestamp from any run for this platform."""
         result = await self.session.execute(
             select(ScrapeRun)
             .where(
@@ -179,8 +179,15 @@ class ScrapeRunRepository:
         for run in runs:
             if run.errors_json:
                 for err in reversed(run.errors_json):
+                    fallback_time: datetime | str = run.finished_at or run.started_at
                     if isinstance(err, dict) and "error" in err:
-                        return str(err["error"])
+                        err_time = err.get("timestamp") or fallback_time
+                        return str(err["error"]), err_time
                     elif isinstance(err, str):
-                        return err
+                        return err, fallback_time
         return None
+
+    async def get_latest_error_message(self, platform_id: int) -> str | None:
+        """Retrieve the most recent error message from any run for this platform."""
+        info = await self.get_latest_error_info(platform_id)
+        return info[0] if info else None

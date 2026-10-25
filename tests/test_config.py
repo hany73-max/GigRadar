@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from gigradar.core.config_loader import (
     load_claims_allowlist_config,
     load_platforms_config,
@@ -71,3 +73,48 @@ def test_validate_missing_dir(tmp_path: Path) -> None:
     assert len(results) == 5
     for _file, status in results.items():
         assert "MISSING" in status
+
+
+def test_config_models_extra_forbid() -> None:
+    from pydantic import ValidationError
+
+    from gigradar.core.config_models import PlatformThresholds, ProjectItem
+
+    # Unknown fields must raise ValidationError
+    with pytest.raises(ValidationError):
+        ProjectItem.model_validate(
+            {
+                "id": "proj_1",
+                "title": "Title",
+                "tags": [],
+                "one_liner": "Desc",
+                "unknown_extra_key": 123,
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        PlatformThresholds.model_validate(
+            {
+                "max_existing_bids": 10,
+                "typo_field": "error",
+            }
+        )
+
+
+def test_resolve_platform_thresholds_inheritance() -> None:
+    from gigradar.core.config_loader import resolve_platform_thresholds
+
+    # Freelancer has explicit thresholds in config/platforms.yaml:
+    # max_existing_bids: 40, min_budget_usd: 30.0, max_gig_age_minutes: 360
+    resolved_fl = resolve_platform_thresholds("freelancer", CONFIG_DIR)
+    assert resolved_fl.max_existing_bids == 40
+    assert resolved_fl.min_budget_usd == 30.0
+    assert resolved_fl.max_gig_age_minutes == 360
+
+    # An unknown platform inherits entirely from rules.yaml:
+    # rules.yaml defaults: min_budget_usd=25.0, max_existing_bids=30, max_gig_age_minutes=1440
+    resolved_unknown = resolve_platform_thresholds("non_existent_platform", CONFIG_DIR)
+    assert resolved_unknown.max_existing_bids == 30
+    assert resolved_unknown.min_budget_usd == 25.0
+    assert resolved_unknown.max_gig_age_minutes == 1440
+    assert resolved_unknown.min_expected_listing_rows == 5
